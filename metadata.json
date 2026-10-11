@@ -1,0 +1,6 @@
+{
+  "name": "YEM MART | Your Everyday Store",
+  "description": "Kerala's premium online retail store for Fashion, Electronics, Home & Kitchen, and Gifts. Featuring WhatsApp-guided checkout, instant UPI payment tracking, and Gemini AI shopping concierge.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
