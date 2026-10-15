@@ -30,30 +30,6 @@ async function runMigration() {
   console.log(`   - WhatsApp:   "${db.settings?.whatsappNumber || 'N/A'}"`);
   console.log(`   - Support:    "${db.settings?.supportPhone || 'N/A'}"\n`);
 
-  // Count variants across all products
-  let totalVariants = 0;
-  if (Array.isArray(db.products)) {
-    for (const p of db.products) {
-      if (Array.isArray(p.variants)) {
-        totalVariants += p.variants.length;
-      }
-    }
-  }
-  console.log(`   - Total Product Variants: ${totalVariants}\n`);
-
-  if (isDryRun) {
-    console.log('----------------------------------------------------');
-    console.log('✅ DRY-RUN AUDIT & VALIDATION:');
-    console.log('   1. Backup snapshot parsed cleanly without syntax errors.');
-    console.log(`   2. Found ${db.products?.length || 0} products and ${totalVariants} variants ready for migration.`);
-    console.log(`   3. Verified official WhatsApp number: ${db.settings?.whatsappNumber || '7510447887'}`);
-    console.log('   4. Target Supabase tables: store_settings, products, product_variants, coupons, orders, stock_adjustment_logs, audit_logs.');
-    console.log('   5. No database modifications were performed (dry-run mode).');
-    console.log('----------------------------------------------------');
-    console.log('🎉 Dry-run validation test PASSED!\n');
-    return;
-  }
-
   if (!isSupabaseConfigured()) {
     console.error('❌ Supabase credentials missing in environment!');
     console.error('Please configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
@@ -79,8 +55,6 @@ async function runMigration() {
       announcement_text: db.settings.announcementText || 'Free Delivery on Orders Above ₹499 | Kerala Delivery in 24–48 Hours',
       coverage_area: db.settings.coverageArea || 'All 14 Districts across Kerala & Selected Metro Hubs',
       office_city: db.settings.officeCity || 'Kozhikode',
-      allow_cod: true,
-      allow_upi: true,
       updated_at: new Date().toISOString()
     });
     if (error) {
@@ -91,7 +65,7 @@ async function runMigration() {
     }
   }
 
-  // 2. Migrate Products & Variants
+  // 2. Migrate Products (with variants JSONB)
   if (Array.isArray(db.products) && db.products.length > 0) {
     console.log(`⏳ Migrating ${db.products.length} products...`);
     let prodSuccess = 0;
@@ -105,56 +79,33 @@ async function runMigration() {
         description: p.description || '',
         highlights: p.highlights || [],
         specs: p.specs || {},
+        price: p.price,
+        original_price: p.originalPrice || p.price,
+        discount_percent: p.discountPercent ?? 0,
         rating: p.rating ?? 4.5,
         review_count: p.reviewCount ?? 0,
-        mrp: p.originalPrice || p.price,
-        price: p.price,
-        discount_percentage: p.discountPercent ?? 0,
         images: p.images || [],
         main_image: p.mainImage || (p.images?.[0] ?? null),
-        tags: p.tags || [],
-        is_in_stock: (p.stock ?? 0) > 0,
-        stock_count: p.stock ?? 0,
+        status: p.status || 'published',
+        scheduled_publish_date: p.scheduledPublishDate || null,
+        stock: p.stock ?? 0,
         low_stock_threshold: p.lowStockThreshold ?? 5,
-        sku: p.sku || null,
-        badge: p.badge || null,
         is_featured: Boolean(p.isFeatured),
         is_best_deal: Boolean(p.isBestDeal),
         is_new_arrival: Boolean(p.isNewArrival),
+        sku: p.sku || null,
+        tags: p.tags || [],
         required_variant_type: p.requiredVariantType || null,
-        status: p.status || 'published',
-        scheduled_publish_date: p.scheduledPublishDate || null,
+        variants: p.variants || [],
+        created_at: p.createdAt || new Date().toISOString(),
         updated_at: new Date().toISOString()
       });
 
       if (prodErr) {
         console.error(`❌ Error migrating product ${p.id}:`, prodErr);
         totalErrors++;
-        continue;
-      }
-      prodSuccess++;
-
-      if (Array.isArray(p.variants) && p.variants.length > 0) {
-        for (const v of p.variants) {
-          const { error: varErr } = await supabase.from('product_variants').upsert({
-            id: v.id,
-            product_id: p.id,
-            title: v.name,
-            type: v.type || 'size',
-            sku: v.sku || null,
-            size: v.type === 'size' ? v.name : null,
-            color: v.type === 'color' ? v.name : null,
-            price: v.price,
-            original_price: v.originalPrice || null,
-            stock_count: v.stock ?? 0,
-            image: v.image || null,
-            updated_at: new Date().toISOString()
-          });
-          if (varErr) {
-            console.error(`❌ Error migrating variant ${v.id}:`, varErr);
-            totalErrors++;
-          }
-        }
+      } else {
+        prodSuccess++;
       }
     }
     console.log(`✅ Products migrated: ${prodSuccess}/${db.products.length}`);
@@ -171,13 +122,14 @@ async function runMigration() {
         description: c.description || null,
         discount_type: c.discountType,
         discount_value: c.discountValue,
-        min_order_amount: c.minPurchase ?? 0,
-        max_discount_amount: c.maxDiscount || null,
+        min_purchase: c.minPurchase ?? 0,
+        max_discount: c.maxDiscount || null,
+        start_date: c.startDate || new Date().toISOString(),
+        end_date: c.validUntil || c.endDate || '2030-12-31T23:59:59Z',
         usage_limit: c.usageLimit || null,
-        times_used: c.timesUsed ?? 0,
+        used_count: c.timesUsed ?? c.usedCount ?? 0,
         is_active: c.isActive !== false,
-        valid_until: c.validUntil || null,
-        updated_at: new Date().toISOString()
+        created_at: new Date().toISOString()
       });
       if (coupErr) {
         console.error(`❌ Error migrating coupon ${c.code}:`, coupErr);
@@ -196,55 +148,36 @@ async function runMigration() {
     for (const o of db.orders) {
       const { error: ordErr } = await supabase.from('orders').upsert({
         id: o.id,
-        customer_name: o.customerName,
-        phone: o.phone,
-        email: o.email || null,
-        address: o.address,
-        city: o.city || null,
-        pincode: o.pincode,
+        created_at: o.createdAt || new Date().toISOString(),
+        customer: o.customer || {
+          fullName: o.customerName || 'Customer',
+          phone: o.phone || '',
+          address: o.address || '',
+          pincode: o.pincode || '',
+          email: o.email || null,
+          city: o.city || null
+        },
+        items: o.items || [],
         subtotal: o.subtotal,
         delivery_fee: o.deliveryFee ?? 0,
-        discount: o.discount ?? 0,
+        discount_amount: o.discount ?? o.discountAmount ?? 0,
         coupon_code: o.couponCode || null,
-        total: o.total,
-        payment_method: o.paymentMethod,
+        grand_total: o.total ?? o.grandTotal ?? 0,
+        status: o.orderStatus || o.status || 'prepared',
         payment_status: o.paymentStatus || 'pending',
-        order_status: o.orderStatus || 'prepared',
         utr_number: o.utrNumber || null,
         payment_submitted_at: o.paymentSubmittedAt || null,
         cancellation_reason: o.cancellationReason || null,
         cancelled_at: o.cancelledAt || null,
         is_restocked_on_cancellation: Boolean(o.isRestockedOnCancellation),
-        tracking_number: o.trackingNumber || null,
-        notes: o.notes || null,
-        created_at: o.createdAt || new Date().toISOString(),
+        status_timeline: o.statusTimeline || [],
         updated_at: o.updatedAt || new Date().toISOString()
       });
       if (ordErr) {
         console.error(`❌ Error migrating order ${o.id}:`, ordErr);
         totalErrors++;
-        continue;
-      }
-      orderSuccess++;
-
-      if (Array.isArray(o.items) && o.items.length > 0) {
-        for (const item of o.items) {
-          const { error: itemErr } = await supabase.from('order_items').insert({
-            order_id: o.id,
-            product_id: item.productId,
-            variant_name: item.variantName || null,
-            variant_sku: item.variantSku || null,
-            product_name: item.productName,
-            quantity: item.quantity,
-            price_at_purchase: item.unitPrice,
-            total_price: item.totalPrice,
-            image_url: item.image || null
-          });
-          if (itemErr) {
-            console.error(`❌ Error inserting order item for order ${o.id}:`, itemErr);
-            totalErrors++;
-          }
-        }
+      } else {
+        orderSuccess++;
       }
     }
     console.log(`✅ Orders migrated: ${orderSuccess}/${db.orders.length}`);
@@ -257,15 +190,15 @@ async function runMigration() {
     for (const s of db.stockLogs) {
       const { error: stockErr } = await supabase.from('stock_adjustment_logs').upsert({
         id: s.id,
+        timestamp: s.timestamp || new Date().toISOString(),
         product_id: s.productId,
         product_name: s.productName,
         variant_sku: s.variantSku || null,
         previous_stock: s.previousStock,
         new_stock: s.newStock,
-        delta: s.difference,
+        difference: s.difference ?? s.delta,
         reason: s.reason,
-        actor: s.actor || 'admin',
-        created_at: s.timestamp || new Date().toISOString()
+        actor: s.actor || 'admin'
       });
       if (stockErr) {
         console.error(`❌ Error migrating stock log ${s.id}:`, stockErr);
@@ -284,11 +217,11 @@ async function runMigration() {
     for (const a of db.auditLogs) {
       const { error: auditErr } = await supabase.from('audit_logs').upsert({
         id: a.id,
+        timestamp: a.timestamp || new Date().toISOString(),
         action: a.action,
         actor: a.actor || 'admin',
         details: a.details || {},
-        ip_address: a.ipAddress || null,
-        created_at: a.timestamp || new Date().toISOString()
+        target_id: a.targetId || null
       });
       if (auditErr) {
         console.error(`❌ Error migrating audit log ${a.id}:`, auditErr);

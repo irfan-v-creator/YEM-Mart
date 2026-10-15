@@ -161,25 +161,6 @@ class Store {
         .order('created_at', { ascending: false });
 
       if (!pErr && pRows && pRows.length > 0) {
-        const { data: vRows } = await supabase.from('product_variants').select('*');
-        const varMap = new Map<string, any[]>();
-        if (vRows) {
-          for (const v of vRows) {
-            const list = varMap.get(v.product_id) || [];
-            list.push({
-              id: v.id,
-              name: v.title,
-              type: v.type || 'size',
-              sku: v.sku || '',
-              price: Number(v.price),
-              originalPrice: v.original_price ? Number(v.original_price) : undefined,
-              stock: Number(v.stock_count ?? 0),
-              image: v.image || undefined,
-            });
-            varMap.set(v.product_id, list);
-          }
-        }
-
         this.data.products = pRows.map((r: any) => ({
           id: r.id,
           name: r.name,
@@ -190,15 +171,15 @@ class Store {
           highlights: Array.isArray(r.highlights) ? r.highlights : [],
           specs: r.specs && typeof r.specs === 'object' ? r.specs : {},
           price: Number(r.price),
-          originalPrice: r.mrp ? Number(r.mrp) : undefined,
-          discountPercent: r.discount_percentage ? Number(r.discount_percentage) : 0,
+          originalPrice: r.original_price ? Number(r.original_price) : (r.mrp ? Number(r.mrp) : undefined),
+          discountPercent: r.discount_percent !== undefined ? Number(r.discount_percent) : (r.discount_percentage ? Number(r.discount_percentage) : 0),
           rating: r.rating ? Number(r.rating) : 4.5,
           reviewCount: r.review_count ? Number(r.review_count) : 0,
           images: Array.isArray(r.images) && r.images.length > 0 ? r.images : [r.main_image || ''],
           mainImage: r.main_image || (r.images && r.images[0]) || '',
           status: r.status || 'published',
           scheduledPublishDate: r.scheduled_publish_date || undefined,
-          stock: Number(r.stock_count ?? 0),
+          stock: Number(r.stock ?? r.stock_count ?? 0),
           lowStockThreshold: Number(r.low_stock_threshold ?? 5),
           isFeatured: Boolean(r.is_featured),
           isBestDeal: Boolean(r.is_best_deal),
@@ -206,7 +187,7 @@ class Store {
           requiredVariantType: r.required_variant_type || undefined,
           sku: r.sku || '',
           tags: Array.isArray(r.tags) ? r.tags : [],
-          variants: varMap.get(r.id) || [],
+          variants: Array.isArray(r.variants) ? r.variants : [],
         }));
       }
 
@@ -219,13 +200,43 @@ class Store {
           description: c.description || '',
           discountType: c.discount_type === 'percentage' ? 'percentage' : 'flat',
           discountValue: Number(c.discount_value),
-          minPurchase: Number(c.min_order_amount ?? 0),
-          maxDiscount: c.max_discount_amount ? Number(c.max_discount_amount) : undefined,
-          startDate: c.valid_from || new Date().toISOString(),
-          endDate: c.valid_until || '2030-12-31T23:59:59Z',
+          minPurchase: Number(c.min_purchase ?? c.min_order_amount ?? 0),
+          maxDiscount: c.max_discount ? Number(c.max_discount) : (c.max_discount_amount ? Number(c.max_discount_amount) : undefined),
+          startDate: c.start_date || c.valid_from || new Date().toISOString(),
+          endDate: c.end_date || c.valid_until || '2030-12-31T23:59:59Z',
           usageLimit: c.usage_limit ? Number(c.usage_limit) : 9999,
-          usedCount: Number(c.times_used ?? 0),
+          usedCount: Number(c.used_count ?? c.times_used ?? 0),
           isActive: Boolean(c.is_active),
+        }));
+      }
+
+      // 4. Orders
+      const { data: oRows, error: oErr } = await supabase.from('orders').select('*');
+      if (!oErr && oRows && oRows.length > 0) {
+        this.data.orders = oRows.map((o: any) => ({
+          id: o.id,
+          createdAt: o.created_at,
+          customer: o.customer || {
+            fullName: o.customer_name || 'Customer',
+            phone: o.phone || '',
+            address: o.address || '',
+            pincode: o.pincode || '',
+          },
+          items: Array.isArray(o.items) ? o.items : [],
+          subtotal: Number(o.subtotal || 0),
+          deliveryFee: Number(o.delivery_fee || 0),
+          discountAmount: Number(o.discount_amount || o.discount || 0),
+          couponCode: o.coupon_code || undefined,
+          grandTotal: Number(o.grand_total || o.total || 0),
+          status: o.status || o.order_status || 'prepared',
+          paymentStatus: o.payment_status || 'pending',
+          utrNumber: o.utr_number || undefined,
+          paymentSubmittedAt: o.payment_submitted_at || undefined,
+          cancellationReason: o.cancellation_reason || undefined,
+          cancelledAt: o.cancelled_at || undefined,
+          isRestockedOnCancellation: Boolean(o.is_restocked_on_cancellation),
+          statusTimeline: Array.isArray(o.status_timeline) ? o.status_timeline : [],
+          updatedAt: o.updated_at,
         }));
       }
 
@@ -253,44 +264,24 @@ class Store {
         specs: p.specs || {},
         rating: p.rating ?? 4.5,
         review_count: p.reviewCount ?? 0,
-        mrp: p.originalPrice || p.price,
+        original_price: p.originalPrice || p.price,
         price: p.price,
-        discount_percentage: p.discountPercent ?? 0,
+        discount_percent: p.discountPercent ?? 0,
         images: p.images || [],
         main_image: p.mainImage || (p.images?.[0] ?? null),
         tags: p.tags || [],
-        is_in_stock: (p.stock ?? 0) > 0,
-        stock_count: p.stock ?? 0,
+        stock: p.stock ?? 0,
         low_stock_threshold: p.lowStockThreshold ?? 5,
         sku: p.sku || null,
-        badge: (p as any).badge || null,
         is_featured: Boolean(p.isFeatured),
         is_best_deal: Boolean(p.isBestDeal),
         is_new_arrival: Boolean(p.isNewArrival),
         required_variant_type: p.requiredVariantType || null,
         status: p.status || 'published',
         scheduled_publish_date: p.scheduledPublishDate || null,
+        variants: p.variants || [],
         updated_at: new Date().toISOString(),
       });
-
-      if (p.variants && p.variants.length > 0) {
-        for (const v of p.variants) {
-          await supabase.from('product_variants').upsert({
-            id: v.id,
-            product_id: p.id,
-            title: v.name,
-            type: v.type || 'size',
-            sku: v.sku || null,
-            size: v.type === 'size' ? v.name : null,
-            color: v.type === 'color' ? v.name : null,
-            price: v.price,
-            original_price: v.originalPrice || null,
-            stock_count: v.stock ?? 0,
-            image: v.image || null,
-            updated_at: new Date().toISOString(),
-          });
-        }
-      }
     } catch (err) {
       console.error(`Failed to sync product ${p.id} to Supabase:`, err);
     }
@@ -339,46 +330,24 @@ class Store {
     try {
       await supabase.from('orders').upsert({
         id: o.id,
-        customer_name: o.customer.fullName,
-        phone: o.customer.phone,
-        email: (o.customer as any).email || null,
-        address: `${o.customer.address}${o.customer.landmark ? ` (Landmark: ${o.customer.landmark})` : ''}`,
-        city: (o.customer as any).city || o.customer.district || null,
-        pincode: o.customer.pincode,
+        created_at: o.createdAt || new Date().toISOString(),
+        customer: o.customer,
+        items: o.items || [],
         subtotal: o.subtotal,
         delivery_fee: o.deliveryFee,
-        discount: o.discountAmount,
+        discount_amount: o.discountAmount,
         coupon_code: o.couponCode || null,
-        total: o.grandTotal,
-        payment_method: (o.customer as any).paymentMethod || (o.paymentStatus ? 'upi' : 'cod'),
-        payment_status: o.paymentStatus,
-        order_status: o.status,
+        grand_total: o.grandTotal,
+        status: o.status,
+        payment_status: o.paymentStatus || 'pending',
         utr_number: o.utrNumber || null,
         payment_submitted_at: o.paymentSubmittedAt || null,
         cancellation_reason: o.cancellationReason || null,
         cancelled_at: o.cancelledAt || null,
         is_restocked_on_cancellation: Boolean(o.isRestockedOnCancellation),
-        tracking_number: (o as any).trackingNumber || null,
-        notes: o.customer.orderNotes || null,
-        created_at: o.createdAt || new Date().toISOString(),
+        status_timeline: o.statusTimeline || [],
         updated_at: new Date().toISOString(),
       });
-
-      if (o.items && o.items.length > 0) {
-        for (const item of o.items) {
-          await supabase.from('order_items').insert({
-            order_id: o.id,
-            product_id: item.productId,
-            variant_name: item.variantName || null,
-            variant_sku: item.variantSku || null,
-            product_name: item.productName,
-            quantity: item.quantity,
-            price_at_purchase: item.unitPrice,
-            total_price: item.totalPrice,
-            image_url: item.image || null,
-          });
-        }
-      }
     } catch (err) {
       console.error(`Failed to sync order ${o.id} to Supabase:`, err);
     }
@@ -390,16 +359,9 @@ class Store {
     if (!supabase) return;
     try {
       await supabase.from('orders').update({
-        order_status: status,
+        status: status,
         updated_at: new Date().toISOString(),
       }).eq('id', orderId);
-
-      await supabase.from('order_status_history').insert({
-        order_id: orderId,
-        new_status: status,
-        changed_by: actor,
-        note: note || `Status updated to ${status}`,
-      });
     } catch (err) {
       console.error(`Failed to sync order status for ${orderId}:`, err);
     }
@@ -413,7 +375,7 @@ class Store {
       await supabase.from('orders').update({
         utr_number: utrNumber,
         payment_status: 'submitted',
-        order_status: 'payment_submitted',
+        status: 'payment_submitted',
         payment_submitted_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }).eq('id', orderId);
@@ -433,13 +395,13 @@ class Store {
         description: c.description || null,
         discount_type: c.discountType,
         discount_value: c.discountValue,
-        min_order_amount: c.minPurchase || 0,
-        max_discount_amount: c.maxDiscount || null,
+        min_purchase: c.minPurchase || 0,
+        max_discount: c.maxDiscount || null,
         usage_limit: c.usageLimit || null,
-        times_used: c.usedCount || 0,
+        used_count: c.usedCount || 0,
         is_active: c.isActive !== false,
-        valid_until: c.endDate || null,
-        updated_at: new Date().toISOString(),
+        end_date: c.endDate || null,
+        created_at: new Date().toISOString(),
       });
     } catch (err) {
       console.error(`Failed to sync coupon ${c.code} to Supabase:`, err);
@@ -464,15 +426,15 @@ class Store {
     try {
       await supabase.from('stock_adjustment_logs').upsert({
         id: log.id,
+        timestamp: log.timestamp || new Date().toISOString(),
         product_id: log.productId,
         product_name: log.productName,
         variant_sku: log.variantSku || null,
         previous_stock: log.previousStock,
         new_stock: log.newStock,
-        delta: log.difference,
+        difference: log.difference,
         reason: log.reason,
         actor: log.actor || 'admin',
-        created_at: log.timestamp || new Date().toISOString(),
       });
     } catch (err) {
       console.error(`Failed to sync stock log ${log.id} to Supabase:`, err);
@@ -486,10 +448,11 @@ class Store {
     try {
       await supabase.from('audit_logs').upsert({
         id: log.id,
+        timestamp: log.timestamp || new Date().toISOString(),
         action: log.action,
         actor: log.actor || 'admin',
         details: { detail: log.details, targetId: log.targetId },
-        created_at: log.timestamp || new Date().toISOString(),
+        target_id: log.targetId || null,
       });
     } catch (err) {
       console.error(`Failed to sync audit log ${log.id} to Supabase:`, err);
