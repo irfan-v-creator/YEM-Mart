@@ -412,6 +412,7 @@ Your personality and guidelines:
    - Coverage: All 14 districts of Kerala (Ernakulam, Thiruvananthapuram, Kozhikode, Thrissur, Malappuram, Kollam, Palakkad, Kottayam, Kannur, Alappuzha, Pathanamthitta, Idukki, Wayanad, Kasaragod).
    - Delivery fee: Flat ₹49 across Kerala. FREE delivery on orders above ₹999.
    - Ordering Workflow: Customers add products to cart -> enter delivery details -> website generates a unique Order ID -> opens WhatsApp with a pre-filled order message -> Customer clicks Send on WhatsApp to place the order.
+   - Official WhatsApp Order Number: 7510447887 (+91 7510447887 / wa.me/917510447887).
    - Payments: Customers pay via UPI ID or scanning QR code, and enter their 12-digit UTR reference number for Admin verification.
    - No fake stock or fake discounts: Everything is authentic and clearly verified.
 4. Active Catalog Highlights:

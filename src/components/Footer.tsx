@@ -9,6 +9,7 @@ import {
   Heart
 } from 'lucide-react';
 import { StoreSettings, Category } from '../types';
+import { formatWhatsAppUrl } from '../utils/formatters';
 
 interface FooterProps {
   settings: StoreSettings;
@@ -161,7 +162,7 @@ export const Footer: React.FC<FooterProps> = ({
               Need personal assistance or custom bulk orders?
             </p>
             <a
-              href={`https://wa.me/${settings.whatsappNumber.replace(/[^0-9]/g, '')}?text=Hello%20YEM%20MART,%20I%20have%20an%20inquiry`}
+              href={formatWhatsAppUrl(settings.whatsappNumber, 'Hello YEM MART, I have an inquiry')}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-green-600 hover:bg-green-700 text-white font-bold text-xs transition-colors w-full justify-center"

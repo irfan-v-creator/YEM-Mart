@@ -123,7 +123,7 @@ Feel free to ask in **English** or **Malayalam / Manglish**!`,
       const fallbackMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         role: 'model',
-        content: `I'm currently unable to reach the AI engine (${err.message || 'Network issue'}).\n\nFor immediate assistance, please connect with our team directly on WhatsApp or browse our categories above.`,
+        content: `I'm currently unable to reach the AI engine (${err.message || 'Network issue'}).\n\nFor immediate assistance, please connect with our team directly on WhatsApp (+91 7510447887) or browse our categories above.`,
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, fallbackMsg]);

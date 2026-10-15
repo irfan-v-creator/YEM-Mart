@@ -91,3 +91,15 @@ ${discountLine}• Delivery: ${deliveryNotice}
 ℹ️ *Payment Method:* UPI Transfer
 _Please reply to confirm order availability and share final payment details._`;
 }
+
+/**
+ * Generates an official WhatsApp URL with 91 country code format: https://wa.me/917510447887
+ */
+export function formatWhatsAppUrl(number?: string, text?: string): string {
+  let raw = (number || '917510447887').replace(/[^0-9]/g, '');
+  if (raw.startsWith('0')) raw = raw.slice(1);
+  const cleanNumber = raw.length === 10 ? `91${raw}` : (raw || '917510447887');
+  const query = text ? `?text=${encodeURIComponent(text)}` : '';
+  return `https://wa.me/${cleanNumber}${query}`;
+}
+

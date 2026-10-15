@@ -15,7 +15,7 @@ import {
   Package
 } from 'lucide-react';
 import { Product, ProductVariant, CartItem } from '../types';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatWhatsAppUrl } from '../utils/formatters';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -24,6 +24,7 @@ interface ProductDetailModalProps {
   isWishlisted: boolean;
   onToggleWishlist: (product: Product) => void;
   onOpenChatWithQuery?: (query: string) => void;
+  whatsappNumber?: string;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
@@ -33,6 +34,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   isWishlisted,
   onToggleWishlist,
   onOpenChatWithQuery,
+  whatsappNumber,
 }) => {
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | undefined>(undefined);
@@ -380,11 +382,11 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
 
             {/* Bottom Sticky Action Bar */}
-            <div className="mt-8 pt-4 border-t border-[#E7E5E0] flex items-center gap-3">
+            <div className="mt-8 pt-4 border-t border-[#E7E5E0] flex flex-col sm:flex-row items-center gap-3">
               <button
                 onClick={handleAddToCart}
                 disabled={isOutOfStock}
-                className={`flex-1 py-3.5 px-6 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all ${
+                className={`w-full sm:flex-1 py-3.5 px-6 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all ${
                   isOutOfStock
                     ? 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
                     : 'bg-[#171717] text-white hover:bg-[#C9A44C] hover:text-[#171717] active:scale-98'
@@ -399,6 +401,22 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       )}`}
                 </span>
               </button>
+
+              <a
+                href={formatWhatsAppUrl(
+                  whatsappNumber,
+                  `Hello YEM MART, I would like to order / inquire about:\n*${product.name}*\nBrand: ${product.brand}${
+                    selectedVariant ? `\nSelected Option: ${selectedVariant.name}` : ''
+                  }\nPrice: ₹${currentPrice}\nQuantity: ${quantity}`
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full sm:w-auto py-3.5 px-5 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-green-600/40 text-green-700 bg-green-50 hover:bg-green-100 transition-all shrink-0 active:scale-98"
+                title="Direct WhatsApp Order"
+              >
+                <MessageCircle className="w-4 h-4 text-green-600" />
+                <span>Order via WhatsApp</span>
+              </a>
             </div>
           </div>
         </div>

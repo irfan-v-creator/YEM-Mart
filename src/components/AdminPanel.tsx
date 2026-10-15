@@ -1237,7 +1237,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onChange={(e) => setLocalSettings({ ...localSettings, whatsappNumber: e.target.value })}
                   className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none font-mono disabled:bg-neutral-100"
                 />
-                <p className="text-[10px] text-neutral-400 mt-1">*PENDING official business WhatsApp registration</p>
+                <p className="text-[10px] text-neutral-500 mt-1">Official WhatsApp order number: 917510447887 (e.g. 917510447887)</p>
               </div>
 
               <div>

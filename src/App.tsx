@@ -1123,6 +1123,7 @@ export default function App() {
           setChatInitialQuery(query);
           setIsChatOpen(true);
         }}
+        whatsappNumber={settings.whatsappNumber}
       />
 
       {/* Cart Slide-Over Drawer */}

@@ -20,7 +20,8 @@ import { CartItem, CustomerDetails, Order, StoreSettings } from '../types';
 import { 
   formatCurrency, 
   generateOrderId, 
-  buildWhatsAppOrderMessage 
+  buildWhatsAppOrderMessage,
+  formatWhatsAppUrl
 } from '../utils/formatters';
 import { ALL_KERALA_DISTRICTS, lookupKeralaDistrict, isKeralaPincode, KeralaDistrict } from '../data/initialData';
 import { api } from '../utils/api';
@@ -211,9 +212,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       couponCode,
       couponDiscount
     );
-    const encoded = encodeURIComponent(msg);
-    const cleanNumber = settings.whatsappNumber.replace(/[^0-9]/g, '');
-    const url = `https://wa.me/${cleanNumber}?text=${encoded}`;
+    const url = formatWhatsAppUrl(settings.whatsappNumber, msg);
     window.open(url, '_blank');
   };
 

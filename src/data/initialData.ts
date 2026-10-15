@@ -3,7 +3,7 @@ import { Product, StoreSettings, HeroBanner, Order, Coupon, AuditLog, StockAdjus
 export const INITIAL_SETTINGS: StoreSettings = {
   storeName: "YEM MART",
   tagline: "Your Everyday Store",
-  whatsappNumber: "919400000000", // PENDING official verified business WhatsApp number
+  whatsappNumber: "917510447887", // Official verified business WhatsApp number
   supportPhone: "+91 94000 00000",
   upiId: "yemmart@okaxis", // PENDING official merchant UPI ID connection
   deliveryFee: 49,
