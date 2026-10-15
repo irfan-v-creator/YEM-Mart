@@ -12,7 +12,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
+// Enable CORS and Preflight for AI Studio preview, cloud domains, and localhost
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-actor, x-admin-token, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // --- ADMIN AUTHENTICATION & SECURITY STATE ---
 const FALLBACK_ADMIN_PASSWORD = 'yem-admin-2026';
@@ -84,10 +103,35 @@ function verifyAdminToken(token: string): AdminSession | null {
   return null;
 }
 
-function getAdminSession(req: express.Request): AdminSession | null {
+function extractToken(req: express.Request): string | null {
+  // 1. Authorization header: "Bearer <token>"
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  const token = authHeader.slice(7).trim();
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  // 2. Custom header: "x-admin-token: <token>"
+  const customHeader = req.headers['x-admin-token'];
+  if (typeof customHeader === 'string' && customHeader.trim()) {
+    return customHeader.trim();
+  }
+  // 3. Cookie header: "yem_admin_token=<token>"
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    const match = cookieHeader.match(/(?:^|;\s*)yem_admin_token=([^;]+)/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1]).trim();
+    }
+  }
+  // 4. Query parameter fallback: "?admin_token=<token>"
+  if (typeof req.query?.admin_token === 'string' && req.query.admin_token.trim()) {
+    return req.query.admin_token.trim();
+  }
+  return null;
+}
+
+function getAdminSession(req: express.Request): AdminSession | null {
+  const token = extractToken(req);
+  if (!token) return null;
   return verifyAdminToken(token);
 }
 
@@ -154,6 +198,12 @@ app.post('/api/admin/login', (req, res) => {
     };
 
     adminSessions.set(token, session);
+
+    // Set cookie header for browsers that support credentials/cookies
+    res.setHeader(
+      'Set-Cookie',
+      `yem_admin_token=${encodeURIComponent(token)}; Path=/; Max-Age=${SESSION_DURATION_MS / 1000}; SameSite=Lax`
+    );
 
     return res.status(200).json({
       success: true,
