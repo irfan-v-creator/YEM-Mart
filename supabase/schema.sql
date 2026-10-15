@@ -1,5 +1,5 @@
 -- ============================================================================
--- YEM MART — Production Supabase PostgreSQL Schema
+-- YEM MART — Production Supabase PostgreSQL Schema & Permissions
 -- Migration Date: October 2026
 -- Aligned with src/types/index.ts
 -- ============================================================================
@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS store_settings (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure all columns exist even if table was created previously
+ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS allow_cod BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS allow_upi BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS support_phone VARCHAR(20) DEFAULT '7510447887';
+ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR(20) NOT NULL DEFAULT '917510447887';
 
 -- ----------------------------------------------------------------------------
 -- 2. PRODUCTS TABLE
@@ -65,6 +71,14 @@ CREATE TABLE IF NOT EXISTS products (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure all columns exist even if table was created previously
+ALTER TABLE products ADD COLUMN IF NOT EXISTS badge VARCHAR(50);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT false;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_best_deal BOOLEAN DEFAULT false;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_new_arrival BOOLEAN DEFAULT false;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS required_variant_type VARCHAR(50);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS scheduled_publish_date TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
 CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
@@ -111,6 +125,9 @@ CREATE TABLE IF NOT EXISTS coupons (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Ensure all columns exist even if table was created previously
+ALTER TABLE coupons ADD COLUMN IF NOT EXISTS max_discount_amount NUMERIC(10, 2);
+
 CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code);
 
 -- ----------------------------------------------------------------------------
@@ -142,6 +159,15 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure all columns exist even if table was created previously
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS city VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_restocked_on_cancellation BOOLEAN DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS utr_number VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_submitted_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
@@ -217,7 +243,19 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
 
 -- ----------------------------------------------------------------------------
--- 10. ROW LEVEL SECURITY (RLS) POLICIES
+-- 10. ROLE PERMISSIONS & GRANTS (CRITICAL FOR SUPABASE SERVICE_ROLE & ANON)
+-- ----------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 11. ROW LEVEL SECURITY (RLS) POLICIES
 -- ----------------------------------------------------------------------------
 ALTER TABLE store_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
@@ -241,3 +279,9 @@ CREATE POLICY "Public can view variants" ON product_variants FOR SELECT USING (t
 
 DROP POLICY IF EXISTS "Public can view active coupons" ON coupons;
 CREATE POLICY "Public can view active coupons" ON coupons FOR SELECT USING (is_active = true);
+
+-- Service Role Key (Backend Server) has full bypass privileges natively,
+-- and the above GRANT statements ensure complete access across all tables.
+
+-- Reload PostgREST schema cache to ensure new columns and grants take effect immediately
+NOTIFY pgrst, 'reload schema';

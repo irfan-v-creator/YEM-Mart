@@ -55,12 +55,13 @@ async function runMigration() {
   }
 
   if (!isSupabaseConfigured()) {
-    console.error('❌ Supabase credentials missing in .env!');
-    console.error('Please configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your .env file or environment.');
+    console.error('❌ Supabase credentials missing in environment!');
+    console.error('Please configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
     process.exit(1);
   }
 
   const supabase = getSupabaseClient()!;
+  let totalErrors = 0;
 
   // 1. Migrate Store Settings
   if (db.settings) {
@@ -84,6 +85,7 @@ async function runMigration() {
     });
     if (error) {
       console.error('❌ Error saving store settings:', error);
+      totalErrors++;
     } else {
       console.log('✅ Store settings migrated successfully.');
     }
@@ -92,6 +94,7 @@ async function runMigration() {
   // 2. Migrate Products & Variants
   if (Array.isArray(db.products) && db.products.length > 0) {
     console.log(`⏳ Migrating ${db.products.length} products...`);
+    let prodSuccess = 0;
     for (const p of db.products) {
       const { error: prodErr } = await supabase.from('products').upsert({
         id: p.id,
@@ -126,8 +129,10 @@ async function runMigration() {
 
       if (prodErr) {
         console.error(`❌ Error migrating product ${p.id}:`, prodErr);
+        totalErrors++;
         continue;
       }
+      prodSuccess++;
 
       if (Array.isArray(p.variants) && p.variants.length > 0) {
         for (const v of p.variants) {
@@ -147,16 +152,18 @@ async function runMigration() {
           });
           if (varErr) {
             console.error(`❌ Error migrating variant ${v.id}:`, varErr);
+            totalErrors++;
           }
         }
       }
     }
-    console.log('✅ Products & variants migrated successfully.');
+    console.log(`✅ Products migrated: ${prodSuccess}/${db.products.length}`);
   }
 
   // 3. Migrate Coupons
   if (Array.isArray(db.coupons) && db.coupons.length > 0) {
     console.log(`⏳ Migrating ${db.coupons.length} coupons...`);
+    let couponSuccess = 0;
     for (const c of db.coupons) {
       const { error: coupErr } = await supabase.from('coupons').upsert({
         id: c.id,
@@ -174,14 +181,18 @@ async function runMigration() {
       });
       if (coupErr) {
         console.error(`❌ Error migrating coupon ${c.code}:`, coupErr);
+        totalErrors++;
+      } else {
+        couponSuccess++;
       }
     }
-    console.log('✅ Coupons migrated successfully.');
+    console.log(`✅ Coupons migrated: ${couponSuccess}/${db.coupons.length}`);
   }
 
   // 4. Migrate Orders
   if (Array.isArray(db.orders) && db.orders.length > 0) {
     console.log(`⏳ Migrating ${db.orders.length} orders...`);
+    let orderSuccess = 0;
     for (const o of db.orders) {
       const { error: ordErr } = await supabase.from('orders').upsert({
         id: o.id,
@@ -211,12 +222,14 @@ async function runMigration() {
       });
       if (ordErr) {
         console.error(`❌ Error migrating order ${o.id}:`, ordErr);
+        totalErrors++;
         continue;
       }
+      orderSuccess++;
 
       if (Array.isArray(o.items) && o.items.length > 0) {
         for (const item of o.items) {
-          await supabase.from('order_items').insert({
+          const { error: itemErr } = await supabase.from('order_items').insert({
             order_id: o.id,
             product_id: item.productId,
             variant_name: item.variantName || null,
@@ -227,17 +240,22 @@ async function runMigration() {
             total_price: item.totalPrice,
             image_url: item.image || null
           });
+          if (itemErr) {
+            console.error(`❌ Error inserting order item for order ${o.id}:`, itemErr);
+            totalErrors++;
+          }
         }
       }
     }
-    console.log('✅ Orders migrated successfully.');
+    console.log(`✅ Orders migrated: ${orderSuccess}/${db.orders.length}`);
   }
 
   // 5. Migrate Stock Logs
   if (Array.isArray(db.stockLogs) && db.stockLogs.length > 0) {
     console.log(`⏳ Migrating ${db.stockLogs.length} stock logs...`);
+    let stockSuccess = 0;
     for (const s of db.stockLogs) {
-      await supabase.from('stock_adjustment_logs').upsert({
+      const { error: stockErr } = await supabase.from('stock_adjustment_logs').upsert({
         id: s.id,
         product_id: s.productId,
         product_name: s.productName,
@@ -249,15 +267,22 @@ async function runMigration() {
         actor: s.actor || 'admin',
         created_at: s.timestamp || new Date().toISOString()
       });
+      if (stockErr) {
+        console.error(`❌ Error migrating stock log ${s.id}:`, stockErr);
+        totalErrors++;
+      } else {
+        stockSuccess++;
+      }
     }
-    console.log('✅ Stock adjustment logs migrated successfully.');
+    console.log(`✅ Stock adjustment logs migrated: ${stockSuccess}/${db.stockLogs.length}`);
   }
 
   // 6. Migrate Audit Logs
   if (Array.isArray(db.auditLogs) && db.auditLogs.length > 0) {
     console.log(`⏳ Migrating ${db.auditLogs.length} audit logs...`);
+    let auditSuccess = 0;
     for (const a of db.auditLogs) {
-      await supabase.from('audit_logs').upsert({
+      const { error: auditErr } = await supabase.from('audit_logs').upsert({
         id: a.id,
         action: a.action,
         actor: a.actor || 'admin',
@@ -265,12 +290,22 @@ async function runMigration() {
         ip_address: a.ipAddress || null,
         created_at: a.timestamp || new Date().toISOString()
       });
+      if (auditErr) {
+        console.error(`❌ Error migrating audit log ${a.id}:`, auditErr);
+        totalErrors++;
+      } else {
+        auditSuccess++;
+      }
     }
-    console.log('✅ Audit logs migrated successfully.');
+    console.log(`✅ Audit logs migrated: ${auditSuccess}/${db.auditLogs.length}`);
   }
 
   console.log('\n====================================================');
-  console.log('🎉 ALL DATA MIGRATED TO SUPABASE SUCCESSFULLY!');
+  if (totalErrors === 0) {
+    console.log('🎉 ALL DATA MIGRATED TO SUPABASE SUCCESSFULLY WITH 0 ERRORS!');
+  } else {
+    console.log(`⚠️ MIGRATION COMPLETED WITH ${totalErrors} ERROR(S). See logs above.`);
+  }
   console.log('====================================================\n');
 }
 
