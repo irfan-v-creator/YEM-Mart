@@ -21,6 +21,7 @@ import {
   INITIAL_AUDIT_LOGS, 
   INITIAL_STOCK_LOGS 
 } from '../src/data/initialData';
+import { getSupabaseClient, isSupabaseConfigured } from './supabase.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,6 +44,19 @@ class Store {
   constructor() {
     this.ensureDataDirectory();
     this.data = this.loadDatabase();
+
+    // Ensure default supportPhone is strictly 7510447887
+    if (this.data.settings && (!this.data.settings.supportPhone || this.data.settings.supportPhone.includes('94000'))) {
+      this.data.settings.supportPhone = '7510447887';
+      this.saveDatabaseSync();
+    }
+
+    // Hydrate from Supabase PostgreSQL if credentials configured
+    if (isSupabaseConfigured()) {
+      this.hydrateFromSupabase().catch(err => {
+        console.warn('Supabase initial hydration notice (using local storage):', err?.message || err);
+      });
+    }
   }
 
   private ensureDataDirectory() {
@@ -106,6 +120,379 @@ class Store {
     // Keep max 200 audit logs
     if (this.data.auditLogs.length > 200) {
       this.data.auditLogs = this.data.auditLogs.slice(0, 200);
+    }
+    this.syncAuditLogToSupabase(log).catch(() => {});
+  }
+
+  // --- SUPABASE HYBRID REPOSITORY SYNC METHODS ---
+  public async hydrateFromSupabase(): Promise<boolean> {
+    if (!isSupabaseConfigured()) return false;
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+
+    try {
+      // 1. Settings
+      const { data: sRow, error: sErr } = await supabase
+        .from('store_settings')
+        .select('*')
+        .eq('id', 'default')
+        .maybeSingle();
+
+      if (!sErr && sRow) {
+        this.data.settings = {
+          storeName: sRow.store_name || this.data.settings.storeName,
+          tagline: sRow.tagline || this.data.settings.tagline,
+          whatsappNumber: sRow.whatsapp_number || '917510447887',
+          supportPhone: sRow.support_phone || '7510447887',
+          upiId: sRow.upi_id || this.data.settings.upiId,
+          deliveryFee: Number(sRow.delivery_fee ?? this.data.settings.deliveryFee),
+          freeDeliveryThreshold: Number(sRow.free_delivery_threshold ?? this.data.settings.freeDeliveryThreshold),
+          lowStockThreshold: Number(sRow.low_stock_threshold ?? this.data.settings.lowStockThreshold),
+          announcementText: sRow.announcement_text || this.data.settings.announcementText,
+          coverageArea: sRow.coverage_area || this.data.settings.coverageArea,
+          officeCity: sRow.office_city || this.data.settings.officeCity,
+        };
+      }
+
+      // 2. Products & Variants
+      const { data: pRows, error: pErr } = await supabase
+        .from('products')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!pErr && pRows && pRows.length > 0) {
+        const { data: vRows } = await supabase.from('product_variants').select('*');
+        const varMap = new Map<string, any[]>();
+        if (vRows) {
+          for (const v of vRows) {
+            const list = varMap.get(v.product_id) || [];
+            list.push({
+              id: v.id,
+              name: v.title,
+              type: v.type || 'size',
+              sku: v.sku || '',
+              price: Number(v.price),
+              originalPrice: v.original_price ? Number(v.original_price) : undefined,
+              stock: Number(v.stock_count ?? 0),
+              image: v.image || undefined,
+            });
+            varMap.set(v.product_id, list);
+          }
+        }
+
+        this.data.products = pRows.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          brand: r.brand || 'YEM MART',
+          category: r.category,
+          shortSummary: r.short_summary || '',
+          description: r.description || '',
+          highlights: Array.isArray(r.highlights) ? r.highlights : [],
+          specs: r.specs && typeof r.specs === 'object' ? r.specs : {},
+          price: Number(r.price),
+          originalPrice: r.mrp ? Number(r.mrp) : undefined,
+          discountPercent: r.discount_percentage ? Number(r.discount_percentage) : 0,
+          rating: r.rating ? Number(r.rating) : 4.5,
+          reviewCount: r.review_count ? Number(r.review_count) : 0,
+          images: Array.isArray(r.images) && r.images.length > 0 ? r.images : [r.main_image || ''],
+          mainImage: r.main_image || (r.images && r.images[0]) || '',
+          status: r.status || 'published',
+          scheduledPublishDate: r.scheduled_publish_date || undefined,
+          stock: Number(r.stock_count ?? 0),
+          lowStockThreshold: Number(r.low_stock_threshold ?? 5),
+          isFeatured: Boolean(r.is_featured),
+          isBestDeal: Boolean(r.is_best_deal),
+          isNewArrival: Boolean(r.is_new_arrival),
+          requiredVariantType: r.required_variant_type || undefined,
+          sku: r.sku || '',
+          tags: Array.isArray(r.tags) ? r.tags : [],
+          variants: varMap.get(r.id) || [],
+        }));
+      }
+
+      // 3. Coupons
+      const { data: cRows, error: cErr } = await supabase.from('coupons').select('*');
+      if (!cErr && cRows && cRows.length > 0) {
+        this.data.coupons = cRows.map((c: any) => ({
+          id: c.id,
+          code: c.code,
+          description: c.description || '',
+          discountType: c.discount_type === 'percentage' ? 'percentage' : 'flat',
+          discountValue: Number(c.discount_value),
+          minPurchase: Number(c.min_order_amount ?? 0),
+          maxDiscount: c.max_discount_amount ? Number(c.max_discount_amount) : undefined,
+          startDate: c.valid_from || new Date().toISOString(),
+          endDate: c.valid_until || '2030-12-31T23:59:59Z',
+          usageLimit: c.usage_limit ? Number(c.usage_limit) : 9999,
+          usedCount: Number(c.times_used ?? 0),
+          isActive: Boolean(c.is_active),
+        }));
+      }
+
+      this.saveDatabaseSync();
+      return true;
+    } catch (err) {
+      console.error('Error during Supabase hydration:', err);
+      return false;
+    }
+  }
+
+  private async syncProductToSupabase(p: Product) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('products').upsert({
+        id: p.id,
+        name: p.name,
+        brand: p.brand || null,
+        category: p.category,
+        short_summary: p.shortSummary || null,
+        description: p.description || '',
+        highlights: p.highlights || [],
+        specs: p.specs || {},
+        rating: p.rating ?? 4.5,
+        review_count: p.reviewCount ?? 0,
+        mrp: p.originalPrice || p.price,
+        price: p.price,
+        discount_percentage: p.discountPercent ?? 0,
+        images: p.images || [],
+        main_image: p.mainImage || (p.images?.[0] ?? null),
+        tags: p.tags || [],
+        is_in_stock: (p.stock ?? 0) > 0,
+        stock_count: p.stock ?? 0,
+        low_stock_threshold: p.lowStockThreshold ?? 5,
+        sku: p.sku || null,
+        badge: (p as any).badge || null,
+        is_featured: Boolean(p.isFeatured),
+        is_best_deal: Boolean(p.isBestDeal),
+        is_new_arrival: Boolean(p.isNewArrival),
+        required_variant_type: p.requiredVariantType || null,
+        status: p.status || 'published',
+        scheduled_publish_date: p.scheduledPublishDate || null,
+        updated_at: new Date().toISOString(),
+      });
+
+      if (p.variants && p.variants.length > 0) {
+        for (const v of p.variants) {
+          await supabase.from('product_variants').upsert({
+            id: v.id,
+            product_id: p.id,
+            title: v.name,
+            type: v.type || 'size',
+            sku: v.sku || null,
+            size: v.type === 'size' ? v.name : null,
+            color: v.type === 'color' ? v.name : null,
+            price: v.price,
+            original_price: v.originalPrice || null,
+            stock_count: v.stock ?? 0,
+            image: v.image || null,
+            updated_at: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to sync product ${p.id} to Supabase:`, err);
+    }
+  }
+
+  private async deleteProductFromSupabase(id: string) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('products').delete().eq('id', id);
+    } catch (err) {
+      console.error(`Failed to delete product ${id} from Supabase:`, err);
+    }
+  }
+
+  private async syncSettingsToSupabase(s: StoreSettings) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('store_settings').upsert({
+        id: 'default',
+        store_name: s.storeName,
+        tagline: s.tagline,
+        whatsapp_number: s.whatsappNumber || '917510447887',
+        support_phone: s.supportPhone || '7510447887',
+        upi_id: s.upiId,
+        delivery_fee: s.deliveryFee,
+        free_delivery_threshold: s.freeDeliveryThreshold,
+        low_stock_threshold: s.lowStockThreshold ?? 5,
+        announcement_text: s.announcementText || '',
+        coverage_area: s.coverageArea || '',
+        office_city: s.officeCity || 'Kozhikode',
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('Failed to sync settings to Supabase:', err);
+    }
+  }
+
+  private async syncOrderToSupabase(o: Order) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('orders').upsert({
+        id: o.id,
+        customer_name: o.customer.fullName,
+        phone: o.customer.phone,
+        email: (o.customer as any).email || null,
+        address: `${o.customer.address}${o.customer.landmark ? ` (Landmark: ${o.customer.landmark})` : ''}`,
+        city: (o.customer as any).city || o.customer.district || null,
+        pincode: o.customer.pincode,
+        subtotal: o.subtotal,
+        delivery_fee: o.deliveryFee,
+        discount: o.discountAmount,
+        coupon_code: o.couponCode || null,
+        total: o.grandTotal,
+        payment_method: (o.customer as any).paymentMethod || (o.paymentStatus ? 'upi' : 'cod'),
+        payment_status: o.paymentStatus,
+        order_status: o.status,
+        utr_number: o.utrNumber || null,
+        payment_submitted_at: o.paymentSubmittedAt || null,
+        cancellation_reason: o.cancellationReason || null,
+        cancelled_at: o.cancelledAt || null,
+        is_restocked_on_cancellation: Boolean(o.isRestockedOnCancellation),
+        tracking_number: (o as any).trackingNumber || null,
+        notes: o.customer.orderNotes || null,
+        created_at: o.createdAt || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      if (o.items && o.items.length > 0) {
+        for (const item of o.items) {
+          await supabase.from('order_items').insert({
+            order_id: o.id,
+            product_id: item.productId,
+            variant_name: item.variantName || null,
+            variant_sku: item.variantSku || null,
+            product_name: item.productName,
+            quantity: item.quantity,
+            price_at_purchase: item.unitPrice,
+            total_price: item.totalPrice,
+            image_url: item.image || null,
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to sync order ${o.id} to Supabase:`, err);
+    }
+  }
+
+  private async syncOrderStatusToSupabase(orderId: string, status: OrderStatus, note?: string, actor = 'Admin') {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('orders').update({
+        order_status: status,
+        updated_at: new Date().toISOString(),
+      }).eq('id', orderId);
+
+      await supabase.from('order_status_history').insert({
+        order_id: orderId,
+        new_status: status,
+        changed_by: actor,
+        note: note || `Status updated to ${status}`,
+      });
+    } catch (err) {
+      console.error(`Failed to sync order status for ${orderId}:`, err);
+    }
+  }
+
+  private async syncUtrToSupabase(orderId: string, utrNumber: string) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('orders').update({
+        utr_number: utrNumber,
+        payment_status: 'submitted',
+        order_status: 'payment_submitted',
+        payment_submitted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('id', orderId);
+    } catch (err) {
+      console.error(`Failed to sync UTR for order ${orderId}:`, err);
+    }
+  }
+
+  private async syncCouponToSupabase(c: Coupon) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('coupons').upsert({
+        id: c.id,
+        code: c.code,
+        description: c.description || null,
+        discount_type: c.discountType,
+        discount_value: c.discountValue,
+        min_order_amount: c.minPurchase || 0,
+        max_discount_amount: c.maxDiscount || null,
+        usage_limit: c.usageLimit || null,
+        times_used: c.usedCount || 0,
+        is_active: c.isActive !== false,
+        valid_until: c.endDate || null,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`Failed to sync coupon ${c.code} to Supabase:`, err);
+    }
+  }
+
+  private async deleteCouponFromSupabase(id: string) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('coupons').delete().eq('id', id);
+    } catch (err) {
+      console.error(`Failed to delete coupon ${id} from Supabase:`, err);
+    }
+  }
+
+  private async syncStockLogToSupabase(log: StockAdjustmentLog) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('stock_adjustment_logs').upsert({
+        id: log.id,
+        product_id: log.productId,
+        product_name: log.productName,
+        variant_sku: log.variantSku || null,
+        previous_stock: log.previousStock,
+        new_stock: log.newStock,
+        delta: log.difference,
+        reason: log.reason,
+        actor: log.actor || 'admin',
+        created_at: log.timestamp || new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`Failed to sync stock log ${log.id} to Supabase:`, err);
+    }
+  }
+
+  private async syncAuditLogToSupabase(log: AuditLog) {
+    if (!isSupabaseConfigured()) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from('audit_logs').upsert({
+        id: log.id,
+        action: log.action,
+        actor: log.actor || 'admin',
+        details: { detail: log.details, targetId: log.targetId },
+        created_at: log.timestamp || new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`Failed to sync audit log ${log.id} to Supabase:`, err);
     }
   }
 
@@ -200,6 +587,7 @@ class Store {
     }
 
     this.saveDatabaseSync();
+    this.syncProductToSupabase(fullProduct).catch(() => {});
     return { success: true, product: fullProduct };
   }
 
@@ -210,6 +598,7 @@ class Store {
     this.data.products = this.data.products.filter(p => p.id !== id);
     this.logAudit('PRODUCT_DELETED', actor, `Deleted product: ${prod.name} (${prod.sku})`, id);
     this.saveDatabaseSync();
+    this.deleteProductFromSupabase(id).catch(() => {});
     return true;
   }
 
@@ -467,6 +856,7 @@ class Store {
     this.data.orders.unshift(newOrder);
     this.logAudit('ORDER_CREATED', 'Customer', `Order ${orderId} placed (₹${newOrder.grandTotal})`, orderId);
     this.saveDatabaseSync();
+    this.syncOrderToSupabase(newOrder).catch(() => {});
 
     return { success: true, order: newOrder };
   }
@@ -489,7 +879,7 @@ class Store {
           if (v) v.stock += line.quantity;
         }
 
-        this.data.stockLogs.unshift({
+        const stockLog: StockAdjustmentLog = {
           id: `stk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           timestamp: new Date().toISOString(),
           productId: prod.id,
@@ -500,7 +890,10 @@ class Store {
           difference: line.quantity,
           reason: `Order ${orderId} cancellation restock`,
           actor,
-        });
+        };
+        this.data.stockLogs.unshift(stockLog);
+        this.syncStockLogToSupabase(stockLog).catch(() => {});
+        this.syncProductToSupabase(prod).catch(() => {});
       }
       order.isRestockedOnCancellation = true;
       order.cancelledAt = new Date().toISOString();
@@ -516,6 +909,7 @@ class Store {
 
     this.logAudit('ORDER_STATUS_UPDATE', actor, `Order ${orderId} status set to ${status}`, orderId);
     this.saveDatabaseSync();
+    this.syncOrderStatusToSupabase(orderId, status, note, actor).catch(() => {});
     return true;
   }
 
@@ -533,6 +927,7 @@ class Store {
 
     this.logAudit('PAYMENT_VERIFIED', actor, `Verified payment for Order ${orderId}`, orderId);
     this.saveDatabaseSync();
+    this.syncOrderStatusToSupabase(orderId, 'confirmed', 'Admin verified UPI bank credit', actor).catch(() => {});
     return true;
   }
 
@@ -552,6 +947,7 @@ class Store {
 
     this.logAudit('UTR_SUBMITTED', 'Customer', `Submitted UTR ${utrNumber} for Order ${orderId}`, orderId);
     this.saveDatabaseSync();
+    this.syncUtrToSupabase(orderId, utrNumber).catch(() => {});
     return true;
   }
 
@@ -610,7 +1006,7 @@ class Store {
       prod.stock = Math.max(0, newStock);
     }
 
-    this.data.stockLogs.unshift({
+    const stockLog: StockAdjustmentLog = {
       id: `stk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       timestamp: new Date().toISOString(),
       productId: prod.id,
@@ -621,10 +1017,13 @@ class Store {
       difference: newStock - previousStock,
       reason: reason || 'Manual stock adjustment',
       actor,
-    });
+    };
+    this.data.stockLogs.unshift(stockLog);
 
     this.logAudit('STOCK_ADJUSTED', actor, `Adjusted stock for ${prod.name} (${previousStock} -> ${newStock})`, prod.id);
     this.saveDatabaseSync();
+    this.syncStockLogToSupabase(stockLog).catch(() => {});
+    this.syncProductToSupabase(prod).catch(() => {});
     return true;
   }
 
@@ -640,6 +1039,7 @@ class Store {
     };
     this.logAudit('SETTINGS_UPDATED', actor, 'Updated storefront settings & delivery rules');
     this.saveDatabaseSync();
+    this.syncSettingsToSupabase(this.data.settings).catch(() => {});
     return this.data.settings;
   }
 
@@ -658,6 +1058,7 @@ class Store {
       this.logAudit('COUPON_CREATED', actor, `Created coupon ${coupon.code}`, coupon.id);
     }
     this.saveDatabaseSync();
+    this.syncCouponToSupabase(coupon).catch(() => {});
     return coupon;
   }
 
@@ -667,6 +1068,7 @@ class Store {
     this.data.coupons = this.data.coupons.filter(c => c.id !== id);
     this.logAudit('COUPON_DELETED', actor, `Deleted coupon ${cpn.code}`, id);
     this.saveDatabaseSync();
+    this.deleteCouponFromSupabase(id).catch(() => {});
     return true;
   }
 

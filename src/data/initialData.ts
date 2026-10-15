@@ -4,7 +4,7 @@ export const INITIAL_SETTINGS: StoreSettings = {
   storeName: "YEM MART",
   tagline: "Your Everyday Store",
   whatsappNumber: "917510447887", // Official verified business WhatsApp number
-  supportPhone: "+91 94000 00000",
+  supportPhone: "7510447887",
   upiId: "yemmart@okaxis", // PENDING official merchant UPI ID connection
   deliveryFee: 49,
   freeDeliveryThreshold: 999,

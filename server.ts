@@ -478,4 +478,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// In local or Cloud Run environments, start the listener. In Vercel serverless functions, export app.
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export { app };
+export default app;
