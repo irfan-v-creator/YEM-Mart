@@ -311,8 +311,13 @@ app.get('/sitemap.xml', (req, res) => {
 });
 
 // --- PRODUCTS API ---
-app.get('/api/products', (req, res) => {
-  const { category, status, search } = req.query;
+// --- PRODUCTS API ---
+app.get('/api/products', async (req, res) => {
+  const { category, status, search, fresh } = req.query;
+  // If fresh requested or if store hasn't been hydrated in > 30 seconds
+  if (fresh === 'true' || fresh === '1' || Date.now() - store.getLastHydratedAt() > 30000) {
+    await store.hydrateFromSupabase().catch(() => {});
+  }
   const isAdmin = Boolean(getAdminSession(req));
   const list = store.getProducts({
     category: typeof category === 'string' ? category : undefined,
@@ -323,7 +328,7 @@ app.get('/api/products', (req, res) => {
   res.json(list);
 });
 
-app.get('/api/products/:id', (req, res) => {
+app.get('/api/products/:id', async (req, res) => {
   const product = store.getProductById(req.params.id);
   if (!product) return res.status(404).json({ error: 'Product not found' });
   const isAdmin = Boolean(getAdminSession(req));
@@ -333,29 +338,29 @@ app.get('/api/products/:id', (req, res) => {
   res.json(product);
 });
 
-app.post('/api/products', requireAdminAuth, (req, res) => {
+app.post('/api/products', requireAdminAuth, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
-  const result = store.saveProduct(req.body, actor);
+  const result = await store.saveProduct(req.body, actor);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
   res.status(201).json(result.product);
 });
 
-app.delete('/api/products/:id', requireAdminAuth, (req, res) => {
+app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
-  const success = store.deleteProduct(req.params.id, actor);
+  const success = await store.deleteProduct(req.params.id, actor);
   if (!success) return res.status(404).json({ error: 'Product not found' });
   res.json({ success: true, message: 'Product deleted' });
 });
 
-app.post('/api/products/bulk-import', requireAdminAuth, (req, res) => {
+app.post('/api/products/bulk-import', requireAdminAuth, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const { rows } = req.body;
   if (!Array.isArray(rows)) {
     return res.status(400).json({ error: 'rows array is required' });
   }
-  const result = store.bulkImportProducts(rows, actor);
+  const result = await store.bulkImportProducts(rows, actor);
   res.json(result);
 });
 
@@ -442,26 +447,39 @@ app.post('/api/orders/track', (req, res) => {
 });
 
 // --- INVENTORY STOCK ADJUSTMENT (Admin-only) ---
-app.post('/api/inventory/adjust', requireAdminAuth, (req, res) => {
+app.post('/api/inventory/adjust', requireAdminAuth, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const { productId, variantSku, newStock, reason } = req.body;
   if (!productId || newStock === undefined) {
     return res.status(400).json({ error: 'productId and newStock are required' });
   }
-  const success = store.adjustStock(productId, variantSku, Number(newStock), reason, actor);
+  const success = await store.adjustStock(productId, variantSku, Number(newStock), reason, actor);
   if (!success) return res.status(404).json({ error: 'Product not found' });
   res.json({ success: true });
 });
 
 // --- SETTINGS API ---
-app.get('/api/settings', (req, res) => {
+app.get('/api/settings', async (req, res) => {
+  if (req.query.fresh === 'true' || req.query.fresh === '1' || Date.now() - store.getLastHydratedAt() > 30000) {
+    await store.hydrateFromSupabase().catch(() => {});
+  }
   res.json(store.getSettings());
 });
 
-app.put('/api/settings', requireAdminAuth, (req, res) => {
+app.put('/api/settings', requireAdminAuth, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
-  const updated = store.updateSettings(req.body, actor);
+  const updated = await store.updateSettings(req.body, actor);
   res.json(updated);
+});
+
+// --- STORE REHYDRATION & CACHE INVALIDATION ---
+app.post('/api/store/rehydrate', async (req, res) => {
+  const success = await store.hydrateFromSupabase();
+  res.json({ 
+    success, 
+    lastHydratedAt: store.getLastHydratedAt(), 
+    productsCount: store.getProducts({ isAdmin: true }).length 
+  });
 });
 
 // --- COUPONS API ---
@@ -469,15 +487,15 @@ app.get('/api/coupons', requireAdminAuth, (req, res) => {
   res.json(store.getCoupons());
 });
 
-app.post('/api/coupons', requireAdminAuth, (req, res) => {
+app.post('/api/coupons', requireAdminAuth, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
-  const saved = store.saveCoupon(req.body, actor);
+  const saved = await store.saveCoupon(req.body, actor);
   res.json(saved);
 });
 
-app.delete('/api/coupons/:id', requireAdminAuth, (req, res) => {
+app.delete('/api/coupons/:id', requireAdminAuth, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
-  const success = store.deleteCoupon(req.params.id, actor);
+  const success = await store.deleteCoupon(req.params.id, actor);
   if (!success) return res.status(404).json({ error: 'Coupon not found' });
   res.json({ success: true });
 });

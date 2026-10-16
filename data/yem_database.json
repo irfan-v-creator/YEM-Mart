@@ -1539,6 +1539,57 @@
   ],
   "orders": [
     {
+      "id": "YEM-20261009-8819",
+      "createdAt": "2026-10-09T14:15:00+00:00",
+      "customer": {
+        "phone": "9447890123",
+        "address": "Villa 12, Skyline Green Hills, Kadavanthra",
+        "pincode": "682020",
+        "district": "Ernakulam",
+        "fullName": "Aiswarya Nair",
+        "landmark": "Opposite Regional Sports Centre"
+      },
+      "items": [
+        {
+          "image": "https://images.unsplash.com/photo-1605647540924-852290f6b0d5?auto=format&fit=crop&w=800&q=80",
+          "quantity": 1,
+          "productId": "prod-gft-01",
+          "unitPrice": 1799,
+          "totalPrice": 1799,
+          "variantSku": "YM-GFT-NIL-12",
+          "productName": "Handcrafted Aranmula Style Brass Nilavilakku (12-inch)",
+          "variantName": "12-inch Traditional (1.45kg)"
+        }
+      ],
+      "subtotal": 1799,
+      "deliveryFee": 0,
+      "discountAmount": 0,
+      "grandTotal": 1799,
+      "status": "shipped",
+      "paymentStatus": "verified",
+      "utrNumber": "428210992384",
+      "paymentSubmittedAt": "2026-10-09T14:20:00+00:00",
+      "isRestockedOnCancellation": false,
+      "statusTimeline": [
+        {
+          "note": "Order placed on website",
+          "status": "prepared",
+          "timestamp": "2026-10-09T14:15:00.000Z"
+        },
+        {
+          "note": "Payment verified by Admin",
+          "status": "confirmed",
+          "timestamp": "2026-10-09T14:25:00.000Z"
+        },
+        {
+          "note": "Dispatched via Kerala Express Courier. Tracking ID: KEC-891283",
+          "status": "shipped",
+          "timestamp": "2026-10-09T18:00:00.000Z"
+        }
+      ],
+      "updatedAt": "2026-10-15T16:41:29.749+00:00"
+    },
+    {
       "id": "YEM-20261010-4102",
       "createdAt": "2026-10-10T09:30:00+00:00",
       "customer": {
@@ -1593,58 +1644,7 @@
           "timestamp": "2026-10-10T10:15:00.000Z"
         }
       ],
-      "updatedAt": "2026-10-15T15:35:48.804+00:00"
-    },
-    {
-      "id": "YEM-20261009-8819",
-      "createdAt": "2026-10-09T14:15:00+00:00",
-      "customer": {
-        "phone": "9447890123",
-        "address": "Villa 12, Skyline Green Hills, Kadavanthra",
-        "pincode": "682020",
-        "district": "Ernakulam",
-        "fullName": "Aiswarya Nair",
-        "landmark": "Opposite Regional Sports Centre"
-      },
-      "items": [
-        {
-          "image": "https://images.unsplash.com/photo-1605647540924-852290f6b0d5?auto=format&fit=crop&w=800&q=80",
-          "quantity": 1,
-          "productId": "prod-gft-01",
-          "unitPrice": 1799,
-          "totalPrice": 1799,
-          "variantSku": "YM-GFT-NIL-12",
-          "productName": "Handcrafted Aranmula Style Brass Nilavilakku (12-inch)",
-          "variantName": "12-inch Traditional (1.45kg)"
-        }
-      ],
-      "subtotal": 1799,
-      "deliveryFee": 0,
-      "discountAmount": 0,
-      "grandTotal": 1799,
-      "status": "shipped",
-      "paymentStatus": "verified",
-      "utrNumber": "428210992384",
-      "paymentSubmittedAt": "2026-10-09T14:20:00+00:00",
-      "isRestockedOnCancellation": false,
-      "statusTimeline": [
-        {
-          "note": "Order placed on website",
-          "status": "prepared",
-          "timestamp": "2026-10-09T14:15:00.000Z"
-        },
-        {
-          "note": "Payment verified by Admin",
-          "status": "confirmed",
-          "timestamp": "2026-10-09T14:25:00.000Z"
-        },
-        {
-          "note": "Dispatched via Kerala Express Courier. Tracking ID: KEC-891283",
-          "status": "shipped",
-          "timestamp": "2026-10-09T18:00:00.000Z"
-        }
-      ],
-      "updatedAt": "2026-10-15T15:35:49.247+00:00"
+      "updatedAt": "2026-10-15T16:41:29.418+00:00"
     },
     {
       "id": "YEM-20261010-9124",
@@ -1690,7 +1690,7 @@
           "timestamp": "2026-10-10T11:50:00.000Z"
         }
       ],
-      "updatedAt": "2026-10-15T15:35:49.576+00:00"
+      "updatedAt": "2026-10-15T16:41:30.035+00:00"
     }
   ],
   "settings": {
@@ -1749,6 +1749,30 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "log-1792158519302-439",
+      "timestamp": "2026-10-16T13:48:39.302Z",
+      "action": "PRODUCT_DELETED",
+      "actor": "Admin (Owner)",
+      "details": "Deleted product: Kerala Spices Gift Box Festive Deluxe Edition (YM-GIF-999)",
+      "targetId": "prod-test-live-sync-01"
+    },
+    {
+      "id": "log-1792158503811-20",
+      "timestamp": "2026-10-16T13:48:23.811Z",
+      "action": "PRODUCT_UPDATED",
+      "actor": "Admin (Owner)",
+      "details": "Updated product: Kerala Spices Gift Box Festive Deluxe Edition (YM-GIF-999)",
+      "targetId": "prod-test-live-sync-01"
+    },
+    {
+      "id": "log-1792158493501-229",
+      "timestamp": "2026-10-16T13:48:13.501Z",
+      "action": "PRODUCT_CREATED",
+      "actor": "Admin (Owner)",
+      "details": "Created new product: Kerala Spices Gift Box Special Edition (YM-GIF-999)",
+      "targetId": "prod-test-live-sync-01"
+    },
     {
       "id": "log-1",
       "timestamp": "2026-10-10T09:50:00.000Z",

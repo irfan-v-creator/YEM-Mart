@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Header 
 } from './components/Header';
@@ -158,10 +158,28 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Sync with server on initial mount & handle /admin route validation
+  // Synchronize storefront products and settings fresh from Supabase
+  const refreshStoreData = useCallback(async (isFresh = true) => {
+    try {
+      const [prodList, setList] = await Promise.all([
+        api.getProducts({ fresh: isFresh }),
+        api.getSettings({ fresh: isFresh }),
+      ]);
+      setProducts(prodList);
+      setSettings(setList);
+      try {
+        localStorage.setItem('yem_mart_products', JSON.stringify(prodList));
+        localStorage.setItem('yem_mart_settings', JSON.stringify(setList));
+      } catch {}
+    } catch (err) {
+      console.warn('Store refresh notice:', err);
+    }
+  }, []);
+
+  // Sync with server on initial mount, window focus, route changes, & admin auth
   useEffect(() => {
-    api.getProducts().then(setProducts).catch(() => {});
-    api.getSettings().then(setSettings).catch(() => {});
+    // 1. Fetch fresh products and store settings from Supabase
+    refreshStoreData(true);
 
     const onAdmin = checkIsAdminPath();
     if (api.hasStoredAdminToken()) {
@@ -185,7 +203,33 @@ export default function App() {
       setIsAdminOpen(false);
       setIsAdminAuthModalOpen(true);
     }
-  }, []);
+
+    // 2. Auto-refetch when user returns to tab / window regains focus
+    const handleFocus = () => {
+      refreshStoreData(true);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshStoreData(true);
+      }
+    };
+
+    // 3. Inter-component store update broadcast
+    const handleStoreUpdated = () => {
+      refreshStoreData(false);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('yem:store-updated', handleStoreUpdated);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('yem:store-updated', handleStoreUpdated);
+    };
+  }, [refreshStoreData]);
 
   // Synchronize route and auth state
   useEffect(() => {
@@ -236,6 +280,16 @@ export default function App() {
 
   // Modals and Drawers
   const [activeProductModal, setActiveProductModal] = useState<Product | null>(null);
+
+  // Keep active product modal in sync when products state refreshes
+  useEffect(() => {
+    if (activeProductModal) {
+      const current = products.find((p) => p.id === activeProductModal.id);
+      if (current && JSON.stringify(current) !== JSON.stringify(activeProductModal)) {
+        setActiveProductModal(current);
+      }
+    }
+  }, [products]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -456,8 +510,10 @@ export default function App() {
   // Admin handlers
   const handleAdminUpdateProduct = async (prod: Product) => {
     try {
+      setProducts((prev) => prev.map((p) => (p.id === prod.id ? prod : p)));
       const saved = await api.saveProduct(prod, 'Admin');
       setProducts((prev) => prev.map((p) => (p.id === saved.id ? saved : p)));
+      await refreshStoreData(true);
       api.getAuditLogs().then(setAuditLogs).catch(() => {});
       showToast(`Product saved: ${saved.name}`);
     } catch (err: any) {
@@ -467,8 +523,10 @@ export default function App() {
 
   const handleAdminAddProduct = async (prod: Product) => {
     try {
+      setProducts((prev) => [prod, ...prev]);
       const saved = await api.saveProduct(prod, 'Admin');
-      setProducts((prev) => [saved, ...prev]);
+      setProducts((prev) => [saved, ...prev.filter((p) => p.id !== prod.id && p.id !== saved.id)]);
+      await refreshStoreData(true);
       api.getAuditLogs().then(setAuditLogs).catch(() => {});
       showToast(`Product created: ${saved.name}`);
     } catch (err: any) {
@@ -478,8 +536,9 @@ export default function App() {
 
   const handleAdminDeleteProduct = async (id: string) => {
     try {
-      await api.deleteProduct(id, 'Admin');
       setProducts((prev) => prev.filter((p) => p.id !== id));
+      await api.deleteProduct(id, 'Admin');
+      await refreshStoreData(true);
       api.getAuditLogs().then(setAuditLogs).catch(() => {});
       showToast(`Product removed`);
     } catch (err: any) {
@@ -489,7 +548,7 @@ export default function App() {
 
   const handleAdminBulkImport = async (rows: any[]) => {
     const res = await api.bulkImportProducts(rows, 'Admin');
-    api.getProducts().then(setProducts).catch(() => {});
+    await refreshStoreData(true);
     api.getAuditLogs().then(setAuditLogs).catch(() => {});
     return res;
   };
@@ -500,7 +559,7 @@ export default function App() {
       const updatedOrders = await api.getOrders();
       setOrders(updatedOrders);
       if (status === 'cancelled') {
-        api.getProducts().then(setProducts).catch(() => {});
+        refreshStoreData(true);
       }
       api.getAuditLogs().then(setAuditLogs).catch(() => {});
       showToast(`Order #${orderId} status set to ${status}`);
@@ -523,8 +582,19 @@ export default function App() {
 
   const handleAdminUpdateStock = async (productId: string, variantSku: string | undefined, newStock: number, reason?: string) => {
     try {
+      setProducts((prev) =>
+        prev.map((p) => {
+          if (p.id !== productId) return p;
+          if (variantSku && p.variants) {
+            const vUpdated = p.variants.map((v) => (v.sku === variantSku ? { ...v, stock: newStock } : v));
+            const totalStock = vUpdated.reduce((acc, v) => acc + v.stock, 0);
+            return { ...p, stock: totalStock, variants: vUpdated };
+          }
+          return { ...p, stock: newStock };
+        })
+      );
       await api.adjustStock(productId, variantSku, newStock, reason || 'Manual Admin adjustment', 'Admin');
-      api.getProducts().then(setProducts).catch(() => {});
+      await refreshStoreData(true);
       api.getStockLogs().then(setStockLogs).catch(() => {});
       showToast(`Stock updated to ${newStock}`);
     } catch (err: any) {
@@ -534,8 +604,10 @@ export default function App() {
 
   const handleAdminUpdateSettings = async (newSettings: StoreSettings) => {
     try {
+      setSettings(newSettings);
       const updated = await api.updateSettings(newSettings, 'Admin');
       setSettings(updated);
+      await refreshStoreData(true);
       api.getAuditLogs().then(setAuditLogs).catch(() => {});
       showToast(`Store settings updated`);
     } catch (err: any) {
@@ -579,7 +651,7 @@ export default function App() {
         api.getCoupons(),
         api.getAuditLogs(),
         api.getStockLogs(),
-        api.getProducts(),
+        api.getProducts({ fresh: true }),
       ]);
       setOrders(ordList);
       setCoupons(cpnList);
@@ -597,6 +669,7 @@ export default function App() {
     if (typeof window !== 'undefined' && window.location.pathname !== '/') {
       window.history.pushState({}, '', '/');
     }
+    refreshStoreData(true);
   };
 
   const handleCloseAdminAuthModal = () => {

@@ -77,6 +77,14 @@ function getAdminHeaders(): Record<string, string> {
   return headers;
 }
 
+function notifyStoreUpdated(entity = 'store'): void {
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent('yem:store-updated', { detail: { entity, timestamp: Date.now() } }));
+    } catch {}
+  }
+}
+
 export const api = {
   // Admin Authentication
   async loginAdmin(password: string, role = 'owner'): Promise<{ token: string; role: string; actorName: string }> {
@@ -185,14 +193,16 @@ export const api = {
   },
 
   // Products
-  async getProducts(params?: { category?: string; status?: string; search?: string }): Promise<Product[]> {
+  async getProducts(params?: { category?: string; status?: string; search?: string; fresh?: boolean }): Promise<Product[]> {
     const q = new URLSearchParams();
     if (params?.category) q.set('category', params.category);
     if (params?.status) q.set('status', params.status);
     if (params?.search) q.set('search', params.search);
+    if (params?.fresh) q.set('fresh', 'true');
 
     const res = await fetch(`/api/products?${q.toString()}`, {
       headers: getAdminHeaders(),
+      credentials: 'same-origin',
     });
     if (!res.ok) throw new Error('Failed to fetch products');
     return res.json();
@@ -205,13 +215,16 @@ export const api = {
         ...getAdminHeaders(),
         'x-admin-actor': actor
       },
+      credentials: 'same-origin',
       body: JSON.stringify(product),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to save product');
     }
-    return res.json();
+    const saved = await res.json();
+    notifyStoreUpdated('product');
+    return saved;
   },
 
   async deleteProduct(id: string, actor = 'Admin'): Promise<void> {
@@ -221,11 +234,13 @@ export const api = {
         ...getAdminHeaders(),
         'x-admin-actor': actor,
       },
+      credentials: 'same-origin',
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to delete product');
     }
+    notifyStoreUpdated('product');
   },
 
   async bulkImportProducts(rows: any[], actor = 'Admin') {
@@ -235,13 +250,16 @@ export const api = {
         ...getAdminHeaders(),
         'x-admin-actor': actor,
       },
+      credentials: 'same-origin',
       body: JSON.stringify({ rows }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to import products');
     }
-    return res.json();
+    const result = await res.json();
+    notifyStoreUpdated('product');
+    return result;
   },
 
   // Cart Validation (Trusted Server-Side)
@@ -349,18 +367,24 @@ export const api = {
         ...getAdminHeaders(),
         'x-admin-actor': actor,
       },
+      credentials: 'same-origin',
       body: JSON.stringify({ productId, variantSku, newStock, reason }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to adjust stock');
     }
-    return res.json();
+    const result = await res.json();
+    notifyStoreUpdated('stock');
+    return result;
   },
 
   // Settings
-  async getSettings(): Promise<StoreSettings> {
-    const res = await fetch('/api/settings');
+  async getSettings(params?: { fresh?: boolean }): Promise<StoreSettings> {
+    const q = params?.fresh ? '?fresh=true' : '';
+    const res = await fetch(`/api/settings${q}`, {
+      credentials: 'same-origin',
+    });
     if (!res.ok) throw new Error('Failed to fetch settings');
     return res.json();
   },
@@ -372,19 +396,35 @@ export const api = {
         ...getAdminHeaders(),
         'x-admin-actor': actor,
       },
+      credentials: 'same-origin',
       body: JSON.stringify(settings),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to update settings');
     }
-    return res.json();
+    const updated = await res.json();
+    notifyStoreUpdated('settings');
+    return updated;
+  },
+
+  // Re-hydration
+  async rehydrateStore(): Promise<{ success: boolean; lastHydratedAt: number; productsCount: number }> {
+    const res = await fetch('/api/store/rehydrate', {
+      method: 'POST',
+      headers: getAdminHeaders(),
+      credentials: 'same-origin',
+    });
+    const data = await res.json().catch(() => ({ success: false, lastHydratedAt: Date.now(), productsCount: 0 }));
+    notifyStoreUpdated('all');
+    return data;
   },
 
   // Coupons
   async getCoupons(): Promise<Coupon[]> {
     const res = await fetch('/api/coupons', {
       headers: getAdminHeaders(),
+      credentials: 'same-origin',
     });
     if (!res.ok) throw new Error('Failed to fetch coupons');
     return res.json();
@@ -397,13 +437,16 @@ export const api = {
         ...getAdminHeaders(),
         'x-admin-actor': actor,
       },
+      credentials: 'same-origin',
       body: JSON.stringify(coupon),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to save coupon');
     }
-    return res.json();
+    const saved = await res.json();
+    notifyStoreUpdated('coupon');
+    return saved;
   },
 
   async deleteCoupon(id: string, actor = 'Admin'): Promise<void> {
@@ -413,11 +456,13 @@ export const api = {
         ...getAdminHeaders(),
         'x-admin-actor': actor,
       },
+      credentials: 'same-origin',
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to delete coupon');
     }
+    notifyStoreUpdated('coupon');
   },
 
   // Logs

@@ -40,6 +40,7 @@ export interface DatabaseSchema {
 class Store {
   private data: DatabaseSchema;
   private isWriting = false;
+  private lastHydratedAt = 0;
 
   constructor() {
     this.ensureDataDirectory();
@@ -57,6 +58,10 @@ class Store {
         console.warn('Supabase initial hydration notice (using local storage):', err?.message || err);
       });
     }
+  }
+
+  public getLastHydratedAt(): number {
+    return this.lastHydratedAt;
   }
 
   private ensureDataDirectory() {
@@ -240,6 +245,7 @@ class Store {
         }));
       }
 
+      this.lastHydratedAt = Date.now();
       this.saveDatabaseSync();
       return true;
     } catch (err) {
@@ -488,7 +494,7 @@ class Store {
     return this.data.products.find(p => p.id === id);
   }
 
-  public saveProduct(product: Partial<Product> & { id: string }, actor = 'Admin'): { success: boolean; product?: Product; error?: string } {
+  public async saveProduct(product: Partial<Product> & { id: string }, actor = 'Admin'): Promise<{ success: boolean; product?: Product; error?: string }> {
     // Validation
     if (!product.name || product.name.trim().length === 0) {
       return { success: false, error: 'Product name is required.' };
@@ -550,40 +556,43 @@ class Store {
     }
 
     this.saveDatabaseSync();
-    this.syncProductToSupabase(fullProduct).catch(() => {});
-    return { success: true, product: fullProduct };
+    await this.syncProductToSupabase(fullProduct);
+    await this.hydrateFromSupabase().catch(() => {});
+    return { success: true, product: this.getProductById(fullProduct.id) || fullProduct };
   }
 
-  public deleteProduct(id: string, actor = 'Admin'): boolean {
+  public async deleteProduct(id: string, actor = 'Admin'): Promise<boolean> {
     const prod = this.data.products.find(p => p.id === id);
     if (!prod) return false;
 
     this.data.products = this.data.products.filter(p => p.id !== id);
     this.logAudit('PRODUCT_DELETED', actor, `Deleted product: ${prod.name} (${prod.sku})`, id);
     this.saveDatabaseSync();
-    this.deleteProductFromSupabase(id).catch(() => {});
+    await this.deleteProductFromSupabase(id);
+    await this.hydrateFromSupabase().catch(() => {});
     return true;
   }
 
-  public bulkImportProducts(rows: any[], actor = 'Admin'): { successCount: number; errorCount: number; errors: string[]; imported: Product[] } {
+  public async bulkImportProducts(rows: any[], actor = 'Admin'): Promise<{ successCount: number; errorCount: number; errors: string[]; imported: Product[] }> {
     const errors: string[] = [];
     const imported: Product[] = [];
 
-    rows.forEach((row, idx) => {
+    for (let idx = 0; idx < rows.length; idx++) {
+      const row = rows[idx];
       const rowNum = idx + 1;
       if (!row.name || !row.category || row.price === undefined) {
         errors.push(`Row ${rowNum}: Missing required fields (name, category, or price).`);
-        return;
+        continue;
       }
 
       const price = Number(row.price);
       if (isNaN(price) || price < 0) {
         errors.push(`Row ${rowNum} (${row.name}): Invalid price value.`);
-        return;
+        continue;
       }
 
       const id = row.id?.trim() || `prod-imp-${Date.now()}-${idx}`;
-      const res = this.saveProduct({
+      const res = await this.saveProduct({
         id,
         name: row.name,
         brand: row.brand || 'YEM MART',
@@ -602,7 +611,7 @@ class Store {
       } else if (res.error) {
         errors.push(`Row ${rowNum} (${row.name}): ${res.error}`);
       }
-    });
+    }
 
     this.logAudit('BULK_IMPORT', actor, `Imported ${imported.length} products, ${errors.length} failed rows.`);
     this.saveDatabaseSync();
@@ -953,7 +962,7 @@ class Store {
   }
 
   // --- INVENTORY ADJUSTMENT ---
-  public adjustStock(productId: string, variantSku: string | undefined, newStock: number, reason: string, actor = 'Admin'): boolean {
+  public async adjustStock(productId: string, variantSku: string | undefined, newStock: number, reason: string, actor = 'Admin'): Promise<boolean> {
     const prod = this.data.products.find(p => p.id === productId);
     if (!prod) return false;
 
@@ -985,8 +994,11 @@ class Store {
 
     this.logAudit('STOCK_ADJUSTED', actor, `Adjusted stock for ${prod.name} (${previousStock} -> ${newStock})`, prod.id);
     this.saveDatabaseSync();
-    this.syncStockLogToSupabase(stockLog).catch(() => {});
-    this.syncProductToSupabase(prod).catch(() => {});
+    await Promise.all([
+      this.syncStockLogToSupabase(stockLog).catch(() => {}),
+      this.syncProductToSupabase(prod).catch(() => {}),
+    ]);
+    await this.hydrateFromSupabase().catch(() => {});
     return true;
   }
 
@@ -995,14 +1007,15 @@ class Store {
     return { ...this.data.settings };
   }
 
-  public updateSettings(newSettings: Partial<StoreSettings>, actor = 'Admin'): StoreSettings {
+  public async updateSettings(newSettings: Partial<StoreSettings>, actor = 'Admin'): Promise<StoreSettings> {
     this.data.settings = {
       ...this.data.settings,
       ...newSettings,
     };
     this.logAudit('SETTINGS_UPDATED', actor, 'Updated storefront settings & delivery rules');
     this.saveDatabaseSync();
-    this.syncSettingsToSupabase(this.data.settings).catch(() => {});
+    await this.syncSettingsToSupabase(this.data.settings);
+    await this.hydrateFromSupabase().catch(() => {});
     return this.data.settings;
   }
 
@@ -1011,7 +1024,7 @@ class Store {
     return [...this.data.coupons];
   }
 
-  public saveCoupon(coupon: Coupon, actor = 'Admin'): Coupon {
+  public async saveCoupon(coupon: Coupon, actor = 'Admin'): Promise<Coupon> {
     const existingIdx = this.data.coupons.findIndex(c => c.id === coupon.id || c.code.toUpperCase() === coupon.code.toUpperCase());
     if (existingIdx >= 0) {
       this.data.coupons[existingIdx] = coupon;
@@ -1021,17 +1034,19 @@ class Store {
       this.logAudit('COUPON_CREATED', actor, `Created coupon ${coupon.code}`, coupon.id);
     }
     this.saveDatabaseSync();
-    this.syncCouponToSupabase(coupon).catch(() => {});
+    await this.syncCouponToSupabase(coupon);
+    await this.hydrateFromSupabase().catch(() => {});
     return coupon;
   }
 
-  public deleteCoupon(id: string, actor = 'Admin'): boolean {
+  public async deleteCoupon(id: string, actor = 'Admin'): Promise<boolean> {
     const cpn = this.data.coupons.find(c => c.id === id);
     if (!cpn) return false;
     this.data.coupons = this.data.coupons.filter(c => c.id !== id);
     this.logAudit('COUPON_DELETED', actor, `Deleted coupon ${cpn.code}`, id);
     this.saveDatabaseSync();
-    this.deleteCouponFromSupabase(id).catch(() => {});
+    await this.deleteCouponFromSupabase(id);
+    await this.hydrateFromSupabase().catch(() => {});
     return true;
   }
 
