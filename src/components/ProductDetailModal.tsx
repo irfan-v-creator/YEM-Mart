@@ -12,29 +12,34 @@ import {
   ChevronUp,
   MessageCircle,
   Share2,
-  Package
+  Package,
+  Zap
 } from 'lucide-react';
 import { Product, ProductVariant, CartItem } from '../types';
-import { formatCurrency, formatWhatsAppUrl } from '../utils/formatters';
+import { formatCurrency, formatWhatsAppUrl, buildDirectProductWhatsAppMessage } from '../utils/formatters';
 
 interface ProductDetailModalProps {
   product: Product | null;
   onClose: () => void;
   onAddToCartWithVariant: (product: Product, variant?: ProductVariant, quantity?: number) => void;
+  onDirectBuy?: (product: Product, variant?: ProductVariant, quantity?: number) => void;
   isWishlisted: boolean;
   onToggleWishlist: (product: Product) => void;
   onOpenChatWithQuery?: (query: string) => void;
   whatsappNumber?: string;
+  upiId?: string;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   product,
   onClose,
   onAddToCartWithVariant,
+  onDirectBuy,
   isWishlisted,
   onToggleWishlist,
   onOpenChatWithQuery,
   whatsappNumber,
+  upiId,
 }) => {
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | undefined>(undefined);
@@ -382,40 +387,72 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
 
             {/* Bottom Sticky Action Bar */}
-            <div className="mt-8 pt-4 border-t border-[#E7E5E0] flex flex-col sm:flex-row items-center gap-3">
-              <button
-                onClick={handleAddToCart}
-                disabled={isOutOfStock}
-                className={`w-full sm:flex-1 py-3.5 px-6 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all ${
-                  isOutOfStock
-                    ? 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
-                    : 'bg-[#171717] text-white hover:bg-[#C9A44C] hover:text-[#171717] active:scale-98'
-                }`}
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span>
-                  {isOutOfStock
-                    ? 'Item Sold Out'
-                    : `Add ${quantity > 1 ? `${quantity} items` : ''} to Cart • ${formatCurrency(
-                        currentPrice * quantity
-                      )}`}
-                </span>
-              </button>
+            <div className="mt-8 pt-4 border-t border-[#E7E5E0] flex flex-col gap-2.5">
+              <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                {/* Add to Cart Button */}
+                <button
+                  onClick={handleAddToCart}
+                  disabled={isOutOfStock}
+                  className={`w-full sm:flex-1 py-3.5 px-5 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-neutral-300 transition-all ${
+                    isOutOfStock
+                      ? 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
+                      : 'bg-white hover:bg-neutral-50 text-[#171717] hover:border-[#171717] active:scale-98 shadow-xs'
+                  }`}
+                >
+                  <ShoppingBag className="w-4 h-4 text-neutral-600" />
+                  <span>
+                    {isOutOfStock
+                      ? 'Item Sold Out'
+                      : `Add to Cart • ${formatCurrency(currentPrice * quantity)}`}
+                  </span>
+                </button>
 
+                {/* Instant Checkout / Buy Now Button */}
+                <button
+                  onClick={() => {
+                    if (isOutOfStock) return;
+                    if (product.variants && product.variants.length > 0 && !selectedVariant) {
+                      setVariantError(true);
+                      return;
+                    }
+                    if (onDirectBuy) {
+                      onDirectBuy(product, selectedVariant, quantity);
+                    } else {
+                      handleAddToCart();
+                    }
+                  }}
+                  disabled={isOutOfStock}
+                  className={`w-full sm:flex-1 py-3.5 px-6 rounded-2xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all ${
+                    isOutOfStock
+                      ? 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
+                      : 'bg-[#171717] text-white hover:bg-[#C9A44C] hover:text-[#171717] active:scale-98'
+                  }`}
+                  title="Direct Instant Checkout"
+                >
+                  <Zap className="w-4 h-4 text-[#C9A44C] fill-[#C9A44C]" />
+                  <span>⚡ Instant Buy Now</span>
+                </button>
+              </div>
+
+              {/* Direct WhatsApp Ordering Button */}
               <a
                 href={formatWhatsAppUrl(
                   whatsappNumber,
-                  `Hello YEM MART, I would like to order / inquire about:\n*${product.name}*\nBrand: ${product.brand}${
-                    selectedVariant ? `\nSelected Option: ${selectedVariant.name}` : ''
-                  }\nPrice: ₹${currentPrice}\nQuantity: ${quantity}`
+                  buildDirectProductWhatsAppMessage(
+                    product,
+                    selectedVariant,
+                    quantity,
+                    0,
+                    upiId || '7510447887@ybl'
+                  )
                 )}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full sm:w-auto py-3.5 px-5 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-green-600/40 text-green-700 bg-green-50 hover:bg-green-100 transition-all shrink-0 active:scale-98"
+                className="w-full py-3 px-5 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-green-600/40 text-green-700 bg-green-50 hover:bg-green-100 transition-all active:scale-98"
                 title="Direct WhatsApp Order"
               >
                 <MessageCircle className="w-4 h-4 text-green-600" />
-                <span>Order via WhatsApp</span>
+                <span>Direct WhatsApp Inquiry & Order</span>
               </a>
             </div>
           </div>

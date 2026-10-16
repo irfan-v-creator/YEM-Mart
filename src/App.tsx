@@ -293,6 +293,7 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [directCheckoutItem, setDirectCheckoutItem] = useState<CartItem | null>(null);
   const [isTrackingOpen, setIsTrackingOpen] = useState(false);
   const [trackingInitialId, setTrackingInitialId] = useState('');
   const [trackingInitialPhone, setTrackingInitialPhone] = useState('');
@@ -414,6 +415,24 @@ export default function App() {
     } else {
       handleAddToCartWithVariant(product, undefined, 1);
     }
+  };
+
+  const handleDirectBuy = (product: Product, variant?: ProductVariant, quantity = 1) => {
+    const itemId = variant ? `${product.id}-${variant.id}` : product.id;
+    const price = variant ? variant.price : product.price;
+    const availableStock = variant ? variant.stock : product.stock;
+    const directItem: CartItem = {
+      id: itemId,
+      productId: product.id,
+      product,
+      variant,
+      quantity: Math.min(availableStock, Math.max(1, quantity)),
+      price,
+    };
+    setDirectCheckoutItem(directItem);
+    setActiveProductModal(null);
+    setIsCartOpen(false);
+    setIsCheckoutOpen(true);
   };
 
   // Cart quantity controls
@@ -1190,6 +1209,7 @@ export default function App() {
         product={activeProductModal}
         onClose={() => setActiveProductModal(null)}
         onAddToCartWithVariant={handleAddToCartWithVariant}
+        onDirectBuy={handleDirectBuy}
         isWishlisted={activeProductModal ? wishlist.some((w) => w.id === activeProductModal.id) : false}
         onToggleWishlist={handleToggleWishlist}
         onOpenChatWithQuery={(query) => {
@@ -1197,6 +1217,7 @@ export default function App() {
           setIsChatOpen(true);
         }}
         whatsappNumber={settings.whatsappNumber}
+        upiId={settings.upiId}
       />
 
       {/* Cart Slide-Over Drawer */}
@@ -1231,13 +1252,22 @@ export default function App() {
       {/* Checkout & WhatsApp Generation Modal */}
       <CheckoutModal
         isOpen={isCheckoutOpen}
-        onClose={() => setIsCheckoutOpen(false)}
-        items={cart}
+        onClose={() => {
+          setIsCheckoutOpen(false);
+          setDirectCheckoutItem(null);
+        }}
+        items={directCheckoutItem ? [directCheckoutItem] : cart}
         settings={settings}
         couponCode={appliedCoupon?.code}
         couponDiscount={couponDiscount}
         onOrderCreated={handleOrderCreated}
-        onClearCart={() => setCart([])}
+        onClearCart={() => {
+          if (directCheckoutItem) {
+            setDirectCheckoutItem(null);
+          } else {
+            setCart([]);
+          }
+        }}
         onOpenTrackingWithId={(oid, ph) => {
           setTrackingInitialId(oid);
           setTrackingInitialPhone(ph);

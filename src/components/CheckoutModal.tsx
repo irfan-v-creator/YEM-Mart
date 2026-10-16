@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   CheckCircle2, 
@@ -62,6 +62,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
+  // Snapshot of items at checkout initiation so that onClearCart() does not wipe WhatsApp items
+  const [checkoutItemsSnapshot, setCheckoutItemsSnapshot] = useState<CartItem[]>(items);
+
+  useEffect(() => {
+    if (items && items.length > 0 && step === 'details') {
+      setCheckoutItemsSnapshot(items);
+    }
+  }, [items, step]);
+
   // Created Order State
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [copiedMessage, setCopiedMessage] = useState(false);
@@ -74,9 +83,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   if (!isOpen) return null;
 
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  // Compute active item list (prefer live items if available, otherwise snapshot)
+  const activeItems = (items && items.length > 0) ? items : checkoutItemsSnapshot;
+
+  const subtotal = activeItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const isFreeDelivery = subtotal >= settings.freeDeliveryThreshold;
-  const deliveryFee = items.length === 0 ? 0 : isFreeDelivery ? 0 : settings.deliveryFee;
+  const deliveryFee = activeItems.length === 0 ? 0 : isFreeDelivery ? 0 : settings.deliveryFee;
   const grandTotal = Math.max(0, subtotal - couponDiscount + deliveryFee);
 
   const handlePincodeChange = (val: string) => {
@@ -111,6 +123,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handleProceedToReview = async () => {
     if (!validateForm()) return;
+
+    const itemsToSubmit = activeItems.length > 0 ? activeItems : items;
+    if (itemsToSubmit.length === 0) {
+      alert('Your cart is empty. Please select products to continue.');
+      return;
+    }
+
+    // Freeze snapshot before any clear operations occur
+    setCheckoutItemsSnapshot(itemsToSubmit);
     setIsSubmittingOrder(true);
 
     const customer: CustomerDetails = {
@@ -127,7 +148,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       // 1. First attempt trusted server-side order creation & persistent saving
       const serverOrder = await api.createOrder(
         customer,
-        items.map(i => ({
+        itemsToSubmit.map(i => ({
           productId: i.productId,
           variantSku: i.variant?.sku,
           quantity: i.quantity,
@@ -147,15 +168,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         id: newOrderId,
         createdAt: new Date().toISOString(),
         customer,
-        items: items.map((i) => ({
+        items: itemsToSubmit.map((i) => ({
           productId: i.productId,
-          productName: i.product.name,
+          productName: i.product?.name || 'Selected Item',
           variantName: i.variant?.name,
-          variantSku: i.variant?.sku || i.product.sku,
+          variantSku: i.variant?.sku || i.product?.sku,
           quantity: i.quantity,
           unitPrice: i.price,
           totalPrice: i.price * i.quantity,
-          image: i.product.mainImage,
+          image: i.product?.mainImage || '',
         })),
         subtotal,
         deliveryFee,
@@ -183,35 +204,51 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
   };
 
-  const handleCopyWhatsAppMessage = () => {
-    if (!createdOrder) return;
-    const msg = buildWhatsAppOrderMessage(
+  /**
+   * Resolves the authoritative payload for WhatsApp message generation.
+   * Guarantees item details, quantities, variants, and subtotal are NEVER empty or zero.
+   */
+  const getPreparedWhatsAppMessage = (): string => {
+    if (!createdOrder) return '';
+
+    // Prefer createdOrder.items (which contains productName, variantName, quantity, unitPrice)
+    const orderItems = (createdOrder.items && createdOrder.items.length > 0)
+      ? createdOrder.items
+      : checkoutItemsSnapshot;
+
+    const orderSubtotal = (createdOrder.subtotal && createdOrder.subtotal > 0)
+      ? createdOrder.subtotal
+      : (subtotal > 0 ? subtotal : orderItems.reduce((acc: number, it: any) => acc + (Number(it.totalPrice || (it.price || it.unitPrice || 0) * (it.quantity || 1))), 0));
+
+    const orderDeliveryFee = createdOrder.deliveryFee ?? deliveryFee;
+    const orderGrandTotal = (createdOrder.grandTotal && createdOrder.grandTotal > 0)
+      ? createdOrder.grandTotal
+      : (grandTotal > 0 ? grandTotal : Math.max(0, orderSubtotal - (createdOrder.discountAmount || couponDiscount) + orderDeliveryFee));
+
+    return buildWhatsAppOrderMessage(
       createdOrder.id,
       createdOrder.customer,
-      items,
-      subtotal,
-      deliveryFee,
-      createdOrder.grandTotal || grandTotal,
-      couponCode,
-      couponDiscount
+      orderItems,
+      orderSubtotal,
+      orderDeliveryFee,
+      orderGrandTotal,
+      createdOrder.couponCode || couponCode,
+      createdOrder.discountAmount ?? couponDiscount,
+      settings.upiId
     );
+  };
+
+  const handleCopyWhatsAppMessage = () => {
+    const msg = getPreparedWhatsAppMessage();
+    if (!msg) return;
     navigator.clipboard.writeText(msg);
     setCopiedMessage(true);
     setTimeout(() => setCopiedMessage(false), 2500);
   };
 
   const handleOpenWhatsApp = () => {
-    if (!createdOrder) return;
-    const msg = buildWhatsAppOrderMessage(
-      createdOrder.id,
-      createdOrder.customer,
-      items,
-      subtotal,
-      deliveryFee,
-      createdOrder.grandTotal || grandTotal,
-      couponCode,
-      couponDiscount
-    );
+    const msg = getPreparedWhatsAppMessage();
+    if (!msg) return;
     const url = formatWhatsAppUrl(settings.whatsappNumber, msg);
     window.open(url, '_blank');
   };
@@ -486,6 +523,38 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <p className="text-xs text-neutral-500 mt-1">
                 Recorded on YEM MART database on {new Date().toLocaleDateString('en-IN')}
               </p>
+            </div>
+
+            {/* Ordered Items Attached Card */}
+            <div className="bg-[#F7F6F2] rounded-2xl p-4 border border-[#E7E5E0] space-y-3">
+              <div className="flex items-center justify-between border-b border-[#E7E5E0] pb-2">
+                <span className="text-xs font-bold uppercase text-[#171717] tracking-wider">
+                  Attached to WhatsApp Message ({(createdOrder.items?.reduce((a, b) => a + b.quantity, 0)) || checkoutItemsSnapshot.reduce((a, b) => a + b.quantity, 0)} Items)
+                </span>
+                <span className="text-xs font-extrabold text-[#C9A44C]">
+                  Total: {formatCurrency(createdOrder.grandTotal || grandTotal)}
+                </span>
+              </div>
+              <div className="divide-y divide-neutral-200/60 max-h-40 overflow-y-auto space-y-2 pr-1">
+                {((createdOrder.items && createdOrder.items.length > 0) ? createdOrder.items : checkoutItemsSnapshot).map((it: any, idx: number) => {
+                  const title = it.productName || it.product?.name || it.name || 'Selected Item';
+                  const variant = it.variantName || it.variant?.name;
+                  const qty = it.quantity || 1;
+                  const lineTotal = it.totalPrice || ((it.unitPrice || it.price || 0) * qty);
+                  return (
+                    <div key={idx} className="pt-2 first:pt-0 flex items-center justify-between text-xs">
+                      <div className="pr-2">
+                        <p className="font-semibold text-[#171717] line-clamp-1">{title}</p>
+                        {variant && <p className="text-[11px] text-neutral-500">Option: {variant}</p>}
+                        <p className="text-[10px] text-neutral-400">Qty: {qty}</p>
+                      </div>
+                      <span className="font-bold text-[#171717] shrink-0">
+                        {formatCurrency(lineTotal)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Crucial Operating Disclosure */}
