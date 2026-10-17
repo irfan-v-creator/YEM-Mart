@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
@@ -32,6 +33,179 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// --- DYNAMIC SEO SITEMAP & ROBOTS DIRECTIVES ---
+const STORE_CATEGORIES = [
+  'fashion',
+  'accessories',
+  'electronics',
+  'home-kitchen',
+  'stationery',
+  'kids',
+  'gifts',
+  'others',
+];
+
+app.get('/sitemap.xml', (req, res) => {
+  const host = req.get('host') || 'yemmart.in';
+  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+  const baseUrl = `${protocol}://${host}`;
+  const now = new Date().toISOString().split('T')[0];
+
+  const products = store.getProducts({ isAdmin: false });
+
+  const categoryEntries = STORE_CATEGORIES.map((slug) => `  <url>
+    <loc>${baseUrl}/category/${slug}</loc>
+    <lastmod>${now}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>`).join('\n');
+
+  const productEntries = products.map((prod) => `  <url>
+    <loc>${baseUrl}/product/${prod.id}</loc>
+    <lastmod>${now}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>`).join('\n');
+
+  const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${baseUrl}/</loc>
+    <lastmod>${now}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+${categoryEntries}
+${productEntries}
+</urlset>`;
+
+  res.header('Content-Type', 'application/xml');
+  res.send(sitemapXml);
+});
+
+app.get('/robots.txt', (req, res) => {
+  const host = req.get('host') || 'yemmart.in';
+  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+  const baseUrl = `${protocol}://${host}`;
+
+  const robotsTxt = `# YEM MART Search Engine Directives
+User-agent: *
+Allow: /
+Allow: /product/
+Allow: /category/
+Allow: /sitemap.xml
+Disallow: /api/admin/
+Disallow: /admin
+
+# Dynamic XML Sitemap
+Sitemap: ${baseUrl}/sitemap.xml
+`;
+
+  res.header('Content-Type', 'text/plain');
+  res.send(robotsTxt);
+});
+
+// Dynamic Pre-rendered Open Graph & Schema.org HTML generator for WhatsApp / Search Engine Crawlers
+function renderSeoHtml(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (req.path.startsWith('/api') || req.path === '/sitemap.xml' || req.path === '/robots.txt') {
+    return next();
+  }
+
+  let indexPath = path.join(__dirname, 'dist', 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    indexPath = path.join(__dirname, 'index.html');
+  }
+
+  if (!fs.existsSync(indexPath)) {
+    return next();
+  }
+
+  try {
+    let html = fs.readFileSync(indexPath, 'utf-8');
+    const host = req.get('host') || 'yemmart.in';
+    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const baseUrl = `${protocol}://${host}`;
+
+    const prodMatch = req.path.match(/^\/product\/([^/?#]+)/i);
+    const catMatch = req.path.match(/^\/category\/([^/?#]+)/i);
+
+    if (prodMatch) {
+      const prodId = decodeURIComponent(prodMatch[1]);
+      const product = store.getProductById(prodId);
+      if (product) {
+        const title = `${product.name} - Buy Online for ₹${product.price.toLocaleString('en-IN')} | YEM MART Kerala`;
+        const description = `Order authentic ${product.name} (${product.brand}) online at YEM MART. ${product.shortSummary || product.description.slice(0, 140)}. Fast Kerala express delivery across all 14 districts.`;
+        const image = product.mainImage || (product.images && product.images[0]) || '';
+        const pageUrl = `${baseUrl}/product/${product.id}`;
+
+        const productSchema = {
+          '@context': 'https://schema.org',
+          '@type': 'Product',
+          name: product.name,
+          image: product.images && product.images.length > 0 ? product.images : [product.mainImage],
+          description: product.description,
+          sku: product.sku,
+          brand: { '@type': 'Brand', name: product.brand },
+          offers: {
+            '@type': 'Offer',
+            url: pageUrl,
+            priceCurrency: 'INR',
+            price: product.price,
+            availability: product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+            itemCondition: 'https://schema.org/NewCondition',
+            seller: { '@type': 'Organization', name: 'YEM MART' },
+          },
+          aggregateRating: product.rating ? {
+            '@type': 'AggregateRating',
+            ratingValue: product.rating,
+            reviewCount: product.reviewCount || 5,
+          } : undefined,
+        };
+
+        html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+        html = html.replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${description}" />`);
+        html = html.replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${title}" />`);
+        html = html.replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${description}" />`);
+        html = html.replace(/<meta property="og:image" content=".*?" \/>/i, `<meta property="og:image" content="${image}" />`);
+        html = html.replace(/<meta property="og:type" content=".*?" \/>/i, `<meta property="og:type" content="product" />`);
+        html = html.replace(/<meta property="og:url" content=".*?" \/>/i, `<meta property="og:url" content="${pageUrl}" />`);
+        html = html.replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${title}" />`);
+        html = html.replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${description}" />`);
+        html = html.replace(/<meta name="twitter:image" content=".*?" \/>/i, `<meta name="twitter:image" content="${image}" />`);
+
+        const schemaTag = `<script type="application/ld+json">${JSON.stringify(productSchema)}</script>`;
+        html = html.replace('</head>', `${schemaTag}\n</head>`);
+
+        res.header('Content-Type', 'text/html; charset=utf-8');
+        return res.send(html);
+      }
+    } else if (catMatch) {
+      const slug = decodeURIComponent(catMatch[1]);
+      const catName = slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ');
+      const title = `${catName} Collection - Authentic Kerala Online Shopping | YEM MART`;
+      const description = `Discover handcrafted & curated ${catName} at YEM MART. Authentic Kerala products, guaranteed genuine stock, transparent pricing, and fast delivery across Kerala.`;
+      const pageUrl = `${baseUrl}/category/${slug}`;
+
+      html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
+      html = html.replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${description}" />`);
+      html = html.replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${title}" />`);
+      html = html.replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${description}" />`);
+      html = html.replace(/<meta property="og:url" content=".*?" \/>/i, `<meta property="og:url" content="${pageUrl}" />`);
+
+      res.header('Content-Type', 'text/html; charset=utf-8');
+      return res.send(html);
+    }
+
+    return next();
+  } catch (err) {
+    console.error('Error rendering SEO HTML:', err);
+    return next();
+  }
+}
+
+app.get('/product/:id', renderSeoHtml);
+app.get('/category/:slug', renderSeoHtml);
 
 // --- ADMIN AUTHENTICATION & SECURITY STATE ---
 const FALLBACK_ADMIN_PASSWORD = 'yem-admin-2026';
@@ -609,7 +783,9 @@ async function startServer() {
     // Serve production build from dist
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+      renderSeoHtml(req, res, () => {
+        res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+      });
     });
   } else {
     // In development, hook up Vite dev middleware

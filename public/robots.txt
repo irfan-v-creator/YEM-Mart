@@ -1,0 +1,11 @@
+# YEM MART Search Engine Directives
+User-agent: *
+Allow: /
+Allow: /product/
+Allow: /category/
+Allow: /sitemap.xml
+Disallow: /api/admin/
+Disallow: /admin
+
+# Dynamic XML Sitemap
+Sitemap: https://yemmart.in/sitemap.xml

@@ -73,6 +73,7 @@ import {
 } from './data/initialData';
 import { formatCurrency } from './utils/formatters';
 import { api } from './utils/api';
+import { categoryToSlug, slugToCategory } from './utils/seo';
 
 import { 
   Sparkles, 
@@ -108,11 +109,28 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [stockLogs, setStockLogs] = useState<StockAdjustmentLog[]>([]);
 
-  const checkIsAdminPath = () => {
+  const parseRouteFromLocation = useCallback(() => {
+    if (typeof window === 'undefined') return { type: 'home' as const };
+    const path = window.location.pathname;
+    if (path.toLowerCase() === '/admin' || path.toLowerCase() === '/admin/') {
+      return { type: 'admin' as const };
+    }
+    const prodMatch = path.match(/^\/product\/([^/?#]+)/i);
+    if (prodMatch) {
+      return { type: 'product' as const, idOrSlug: decodeURIComponent(prodMatch[1]) };
+    }
+    const catMatch = path.match(/^\/category\/([^/?#]+)/i);
+    if (catMatch) {
+      return { type: 'category' as const, idOrSlug: decodeURIComponent(catMatch[1]) };
+    }
+    return { type: 'home' as const };
+  }, []);
+
+  const checkIsAdminPath = useCallback(() => {
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname.toLowerCase();
     return path === '/admin' || path === '/admin/';
-  };
+  }, []);
 
   // Admin routing & authentication state
   const [isAdminPath, setIsAdminPath] = useState<boolean>(checkIsAdminPath);
@@ -152,15 +170,12 @@ export default function App() {
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [couponDiscount, setCouponDiscount] = useState<number>(0);
 
-  // Listen for browser navigation (back / forward) to keep view & URL synchronized
-  useEffect(() => {
-    const handlePopState = () => {
-      const onAdmin = checkIsAdminPath();
-      setIsAdminPath(onAdmin);
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  // Track if there's a pending product to open once store products finish loading
+  const [pendingProductId, setPendingProductId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const match = window.location.pathname.match(/^\/product\/([^/?#]+)/i);
+    return match ? decodeURIComponent(match[1]) : null;
+  });
 
   // Synchronize storefront products and settings fresh from Supabase
   const refreshStoreData = useCallback(async (isFresh = true) => {
@@ -268,8 +283,15 @@ export default function App() {
     localStorage.setItem('yem_mart_wishlist', JSON.stringify(wishlist));
   }, [wishlist]);
 
-  // Filtering & Catalog State
-  const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
+  // Filtering & Catalog State (initialized from /category/:slug URL if present)
+  const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>(() => {
+    if (typeof window === 'undefined') return 'All';
+    const match = window.location.pathname.match(/^\/category\/([^/?#]+)/i);
+    if (match) {
+      return slugToCategory(decodeURIComponent(match[1]));
+    }
+    return 'All';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<string>('recommended');
   const [inStockOnly, setInStockOnly] = useState(false);
@@ -282,8 +304,22 @@ export default function App() {
     setVisibleCount(24);
   }, [selectedCategory, searchQuery, sortBy, inStockOnly]);
 
-  // Modals and Drawers
-  const [activeProductModal, setActiveProductModal] = useState<Product | null>(null);
+  // Modals and Drawers (initialized from /product/:id URL if pre-cached)
+  const [activeProductModal, setActiveProductModal] = useState<Product | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const match = window.location.pathname.match(/^\/product\/([^/?#]+)/i);
+    if (match) {
+      const targetId = decodeURIComponent(match[1]);
+      try {
+        const saved = localStorage.getItem('yem_mart_products');
+        const list: Product[] = saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
+        return list.find((p) => p.id === targetId) || null;
+      } catch {
+        return INITIAL_PRODUCTS.find((p) => p.id === targetId) || null;
+      }
+    }
+    return null;
+  });
 
   // Keep active product modal in sync when products state refreshes
   useEffect(() => {
@@ -294,6 +330,81 @@ export default function App() {
       }
     }
   }, [products]);
+
+  // Resolve pending product route once products finish loading
+  useEffect(() => {
+    if (pendingProductId && products.length > 0) {
+      const match = products.find((p) => p.id === pendingProductId);
+      if (match) {
+        setActiveProductModal(match);
+        setPendingProductId(null);
+      }
+    }
+  }, [pendingProductId, products]);
+
+  // Listen for browser navigation (back / forward) to keep view & URL synchronized natively
+  useEffect(() => {
+    const handlePopState = () => {
+      const route = parseRouteFromLocation();
+      if (route.type === 'admin') {
+        setIsAdminPath(true);
+        setActiveProductModal(null);
+      } else {
+        setIsAdminPath(false);
+        if (route.type === 'product' && route.idOrSlug) {
+          const match = products.find((p) => p.id === route.idOrSlug);
+          if (match) {
+            setActiveProductModal(match);
+          } else {
+            setPendingProductId(route.idOrSlug);
+          }
+        } else {
+          setActiveProductModal(null);
+          if (route.type === 'category' && route.idOrSlug) {
+            setSelectedCategory(slugToCategory(route.idOrSlug));
+          } else if (route.type === 'home') {
+            setSelectedCategory('All');
+          }
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [parseRouteFromLocation, products]);
+
+  // Native Browser URL Routing Action Handlers for SEO & Social Sharing
+  const handleOpenProduct = useCallback((product: Product, pushHistory = true) => {
+    setActiveProductModal(product);
+    if (pushHistory && typeof window !== 'undefined') {
+      const newPath = `/product/${product.id}`;
+      if (window.location.pathname !== newPath) {
+        window.history.pushState({ type: 'product', id: product.id }, '', newPath);
+      }
+    }
+  }, []);
+
+  const handleCloseProduct = useCallback((updateUrl = true) => {
+    setActiveProductModal(null);
+    if (updateUrl && typeof window !== 'undefined') {
+      const targetPath = selectedCategory !== 'All' 
+        ? `/category/${categoryToSlug(selectedCategory)}` 
+        : '/';
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ type: selectedCategory !== 'All' ? 'category' : 'home' }, '', targetPath);
+      }
+    }
+  }, [selectedCategory]);
+
+  const handleSelectCategory = useCallback((cat: Category | 'All', pushHistory = true) => {
+    setSelectedCategory(cat);
+    setActiveProductModal(null);
+    if (pushHistory && typeof window !== 'undefined') {
+      const targetPath = cat !== 'All' ? `/category/${categoryToSlug(cat)}` : '/';
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ type: cat !== 'All' ? 'category' : 'home', category: cat }, '', targetPath);
+      }
+    }
+  }, []);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -416,7 +527,7 @@ export default function App() {
 
   const handleSimpleAddToCart = (product: Product) => {
     if (product.variants && product.variants.length > 0) {
-      setActiveProductModal(product);
+      handleOpenProduct(product);
     } else {
       handleAddToCartWithVariant(product, undefined, 1);
     }
@@ -435,7 +546,7 @@ export default function App() {
       price,
     };
     setDirectCheckoutItem(directItem);
-    setActiveProductModal(null);
+    handleCloseProduct(false);
     setIsCartOpen(false);
     setIsCheckoutOpen(true);
   };
@@ -835,10 +946,10 @@ export default function App() {
         settings={settings}
         products={products}
         selectedCategory={selectedCategory}
-        onSelectCategory={setSelectedCategory}
+        onSelectCategory={handleSelectCategory}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onOpenProduct={(prod) => setActiveProductModal(prod)}
+        onOpenProduct={(prod) => handleOpenProduct(prod)}
         cartCount={cartCount}
         cartTotal={cartTotal}
         onOpenCart={() => setIsCartOpen(true)}
@@ -859,7 +970,7 @@ export default function App() {
         <HeroCarousel
           banners={INITIAL_BANNERS}
           onSelectCategory={(cat) => {
-            setSelectedCategory(cat);
+            handleSelectCategory(cat);
             scrollToShop();
           }}
           onOpenChat={() => {
@@ -873,7 +984,7 @@ export default function App() {
           products={products}
           selectedCategory={selectedCategory}
           onSelectCategory={(cat) => {
-            setSelectedCategory(cat);
+            handleSelectCategory(cat);
             scrollToShop();
           }}
         />
@@ -907,7 +1018,7 @@ export default function App() {
                   lowStockThreshold={settings.lowStockThreshold}
                   isWishlisted={wishlist.some((w) => w.id === product.id)}
                   onToggleWishlist={handleToggleWishlist}
-                  onOpenProduct={(p) => setActiveProductModal(p)}
+                  onOpenProduct={(p) => handleOpenProduct(p)}
                   onAddToCart={handleSimpleAddToCart}
                 />
               ))}
@@ -950,7 +1061,7 @@ export default function App() {
                   lowStockThreshold={settings.lowStockThreshold}
                   isWishlisted={wishlist.some((w) => w.id === product.id)}
                   onToggleWishlist={handleToggleWishlist}
-                  onOpenProduct={(p) => setActiveProductModal(p)}
+                  onOpenProduct={(p) => handleOpenProduct(p)}
                   onAddToCart={handleSimpleAddToCart}
                 />
               ))}
@@ -1010,7 +1121,7 @@ export default function App() {
               {(selectedCategory !== 'All' || searchQuery || inStockOnly) && (
                 <button
                   onClick={() => {
-                    setSelectedCategory('All');
+                    handleSelectCategory('All');
                     setSearchQuery('');
                     setInStockOnly(false);
                   }}
@@ -1033,7 +1144,7 @@ export default function App() {
                     lowStockThreshold={settings.lowStockThreshold}
                     isWishlisted={wishlist.some((w) => w.id === product.id)}
                     onToggleWishlist={handleToggleWishlist}
-                    onOpenProduct={(p) => setActiveProductModal(p)}
+                    onOpenProduct={(p) => handleOpenProduct(p)}
                     onAddToCart={handleSimpleAddToCart}
                   />
                 ))}
@@ -1064,7 +1175,7 @@ export default function App() {
               </p>
               <button
                 onClick={() => {
-                  setSelectedCategory('All');
+                  handleSelectCategory('All');
                   setSearchQuery('');
                   setInStockOnly(false);
                 }}
@@ -1140,7 +1251,7 @@ export default function App() {
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E7E5E0] px-3 py-2 flex items-center justify-around text-neutral-600">
         <button
           onClick={() => {
-            setSelectedCategory('All');
+            handleSelectCategory('All');
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           className="flex flex-col items-center gap-0.5 text-[10px] font-semibold hover:text-[#171717]"
@@ -1196,7 +1307,7 @@ export default function App() {
       <Footer
         settings={settings}
         onSelectCategory={(cat) => {
-          setSelectedCategory(cat);
+          handleSelectCategory(cat);
           scrollToShop();
         }}
         onOpenTracking={() => {
@@ -1218,7 +1329,7 @@ export default function App() {
       {/* Product Detail Modal */}
       <ProductDetailModal
         product={activeProductModal}
-        onClose={() => setActiveProductModal(null)}
+        onClose={() => handleCloseProduct()}
         onAddToCartWithVariant={handleAddToCartWithVariant}
         onDirectBuy={handleDirectBuy}
         isWishlisted={activeProductModal ? wishlist.some((w) => w.id === activeProductModal.id) : false}
@@ -1257,7 +1368,7 @@ export default function App() {
           handleSimpleAddToCart(prod);
           setWishlist((prev) => prev.filter((p) => p.id !== prod.id));
         }}
-        onOpenProduct={(prod) => setActiveProductModal(prod)}
+        onOpenProduct={(prod) => handleOpenProduct(prod)}
       />
 
       {/* Checkout & WhatsApp Generation Modal */}
@@ -1313,7 +1424,7 @@ export default function App() {
         initialQuery={chatInitialQuery}
         onOpenProductByName={(name) => {
           const match = products.find((p) => p.name.toLowerCase().includes(name.toLowerCase()));
-          if (match) setActiveProductModal(match);
+          if (match) handleOpenProduct(match);
         }}
       />
     </div>
