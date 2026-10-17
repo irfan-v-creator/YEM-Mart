@@ -112,34 +112,8 @@ export const api = {
 
       // If server returned non-200 with an error JSON, extract it
       const err = await res.json().catch(() => ({}));
-
-      // If the user entered the known master password "yem-admin-2026", provide immediate fallback
-      if (cleanPassword === 'yem-admin-2026') {
-        const fallbackToken = 'yem-admin-2026';
-        currentAdminToken = fallbackToken;
-        safeSetStorage('yem_admin_token', fallbackToken);
-        safeSetStorage('yem_admin_role', cleanRole);
-        return {
-          token: fallbackToken,
-          role: cleanRole,
-          actorName: `Admin (${cleanRole.charAt(0).toUpperCase() + cleanRole.slice(1)})`,
-        };
-      }
-
       throw new Error(err.error || 'Failed to authenticate admin');
     } catch (networkErr: any) {
-      // If network, CORS, or iframe error occurred, master passkey fallback keeps admin operable
-      if (cleanPassword === 'yem-admin-2026') {
-        const fallbackToken = 'yem-admin-2026';
-        currentAdminToken = fallbackToken;
-        safeSetStorage('yem_admin_token', fallbackToken);
-        safeSetStorage('yem_admin_role', cleanRole);
-        return {
-          token: fallbackToken,
-          role: cleanRole,
-          actorName: `Admin (${cleanRole.charAt(0).toUpperCase() + cleanRole.slice(1)})`,
-        };
-      }
       throw networkErr;
     }
   },
@@ -161,16 +135,6 @@ export const api = {
     const token = currentAdminToken || safeGetStorage('yem_admin_token');
     if (!token) return { authenticated: false };
 
-    // Master passkey always valid for owner
-    if (token === 'yem-admin-2026') {
-      const savedRole = safeGetStorage('yem_admin_role') || 'owner';
-      return {
-        authenticated: true,
-        role: savedRole,
-        actorName: `Admin (${savedRole.charAt(0).toUpperCase() + savedRole.slice(1)})`,
-      };
-    }
-
     try {
       const res = await fetch('/api/admin/me', {
         headers: getAdminHeaders(),
@@ -182,7 +146,13 @@ export const api = {
         safeRemoveStorage('yem_admin_role');
         return { authenticated: false };
       }
-      return await res.json();
+      const data = await res.json();
+      if (data && data.authenticated && data.role) {
+        currentAdminToken = token;
+        safeSetStorage('yem_admin_role', data.role);
+        return data;
+      }
+      return { authenticated: false };
     } catch {
       return { authenticated: false };
     }

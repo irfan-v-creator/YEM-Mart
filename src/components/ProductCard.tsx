@@ -96,7 +96,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       </div>
 
       {/* Card Info Details */}
-      <div className="p-4 flex-1 flex flex-col justify-between">
+      <div className="p-3 sm:p-4 flex-1 flex flex-col justify-between">
         <div>
           {/* Brand & Category */}
           <div className="flex items-center justify-between text-xs text-neutral-400 font-medium mb-1">
@@ -107,7 +107,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           {/* Product Name */}
           <h3
             onClick={() => onOpenProduct(product)}
-            className="text-sm font-semibold text-[#171717] group-hover:text-[#C9A44C] transition-colors line-clamp-2 cursor-pointer leading-snug"
+            className="text-xs sm:text-sm font-semibold text-[#171717] group-hover:text-[#C9A44C] transition-colors line-clamp-2 cursor-pointer leading-snug"
             title={product.name}
           >
             {product.name}
@@ -121,31 +121,34 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 <span>{product.rating.toFixed(1)}</span>
               </div>
               {product.reviewCount && (
-                <span className="text-neutral-400 text-[11px]">({product.reviewCount} verified)</span>
+                <span className="text-neutral-400 text-[10px] sm:text-[11px]">({product.reviewCount})</span>
               )}
             </div>
           )}
         </div>
 
-        {/* Price & Add to Cart Action */}
-        <div className="mt-4 pt-3 border-t border-[#F7F6F2] flex items-center justify-between gap-2">
-          <div>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-base sm:text-lg font-extrabold text-[#171717]">
+        {/* Price & Action CTA */}
+        <div className="mt-3 pt-2.5 border-t border-[#F7F6F2] flex flex-col gap-2">
+          {/* Price & Discount */}
+          <div className="flex items-baseline justify-between gap-1">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className="text-base sm:text-lg font-extrabold text-[#171717] tracking-tight">
                 {formatCurrency(product.price)}
               </span>
               {product.originalPrice && product.originalPrice > product.price && (
-                <span className="text-xs text-neutral-400 line-through">
+                <span className="text-[11px] sm:text-xs text-neutral-400 line-through">
                   {formatCurrency(product.originalPrice)}
                 </span>
               )}
             </div>
             {hasVariants && (
-              <p className="text-[10px] text-neutral-400 font-medium">Multiple options</p>
+              <span className="text-[10px] text-neutral-500 font-semibold bg-neutral-100 px-1.5 py-0.5 rounded shrink-0">
+                Options
+              </span>
             )}
           </div>
 
-          {/* Add / Select CTA */}
+          {/* Add / Select CTA Button */}
           <button
             onClick={() => {
               if (hasVariants) {
@@ -155,14 +158,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               }
             }}
             disabled={isOutOfStock}
-            className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs ${
+            className={`w-full py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs whitespace-nowrap active:scale-98 ${
               isOutOfStock
                 ? 'bg-neutral-100 text-neutral-400 cursor-not-allowed'
-                : 'bg-[#171717] text-white hover:bg-[#C9A44C] hover:text-[#171717] active:scale-95'
+                : 'bg-[#171717] text-white hover:bg-[#C9A44C] hover:text-[#171717]'
             }`}
+            title={isOutOfStock ? 'Item is currently sold out' : hasVariants ? 'Select available options' : 'Add to shopping cart'}
           >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>{isOutOfStock ? 'Sold Out' : hasVariants ? 'Select Options' : 'Add to Cart'}</span>
+            <ShoppingBag className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">
+              {isOutOfStock ? 'Sold Out' : hasVariants ? 'Select Options' : 'Add to Cart'}
+            </span>
           </button>
         </div>
       </div>

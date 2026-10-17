@@ -29,6 +29,9 @@ import {
   OrderTrackingModal 
 } from './components/OrderTrackingModal';
 import { 
+  MyOrdersModal 
+} from './components/MyOrdersModal';
+import { 
   WishlistDrawer 
 } from './components/WishlistDrawer';
 import { 
@@ -85,7 +88,8 @@ import {
   ArrowRight,
   Filter,
   CheckCircle2,
-  ChevronDown
+  ChevronDown,
+  Package
 } from 'lucide-react';
 
 export default function App() {
@@ -294,6 +298,7 @@ export default function App() {
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [directCheckoutItem, setDirectCheckoutItem] = useState<CartItem | null>(null);
+  const [isMyOrdersOpen, setIsMyOrdersOpen] = useState(false);
   const [isTrackingOpen, setIsTrackingOpen] = useState(false);
   const [trackingInitialId, setTrackingInitialId] = useState('');
   const [trackingInitialPhone, setTrackingInitialPhone] = useState('');
@@ -492,6 +497,17 @@ export default function App() {
     });
 
     setOrders((prev) => [order, ...prev.filter((o) => o.id !== order.id)]);
+    
+    // Persist order in customer's personal device history for My Orders
+    try {
+      const saved = JSON.parse(localStorage.getItem('yem_mart_my_orders') || '[]');
+      const updated = [order, ...saved.filter((o: any) => o.id !== order.id)].slice(0, 30);
+      localStorage.setItem('yem_mart_my_orders', JSON.stringify(updated));
+      if (order.customer?.phone) {
+        localStorage.setItem('yem_mart_customer_phone', order.customer.phone);
+      }
+    } catch {}
+
     setAppliedCoupon(null);
     setCouponDiscount(0);
   };
@@ -833,9 +849,7 @@ export default function App() {
           setIsChatOpen(true);
         }}
         onOpenTracking={() => {
-          setTrackingInitialId('');
-          setTrackingInitialPhone('');
-          setIsTrackingOpen(true);
+          setIsMyOrdersOpen(true);
         }}
         onScrollToShop={scrollToShop}
       />
@@ -1144,14 +1158,11 @@ export default function App() {
         </button>
 
         <button
-          onClick={() => {
-            setChatInitialQuery('');
-            setIsChatOpen(true);
-          }}
-          className="flex flex-col items-center gap-0.5 text-[10px] font-semibold text-[#C9A44C]"
+          onClick={() => setIsMyOrdersOpen(true)}
+          className="flex flex-col items-center gap-0.5 text-[10px] font-semibold text-neutral-600 hover:text-[#171717]"
         >
-          <Sparkles className="w-5 h-5 text-[#C9A44C]" />
-          <span>AI Guide</span>
+          <Package className="w-5 h-5 text-[#171717]" />
+          <span>My Orders</span>
         </button>
 
         <button
@@ -1271,8 +1282,17 @@ export default function App() {
         onOpenTrackingWithId={(oid, ph) => {
           setTrackingInitialId(oid);
           setTrackingInitialPhone(ph);
-          setIsTrackingOpen(true);
+          setIsMyOrdersOpen(true);
         }}
+      />
+
+      {/* My Orders & Tracking Modal */}
+      <MyOrdersModal
+        isOpen={isMyOrdersOpen}
+        onClose={() => setIsMyOrdersOpen(false)}
+        orders={orders}
+        onRequestCancellation={handleRequestCancellation}
+        onExploreShop={scrollToShop}
       />
 
       {/* Order Tracking Modal with 2FA Lookup */}

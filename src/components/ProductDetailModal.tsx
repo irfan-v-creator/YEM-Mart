@@ -10,13 +10,12 @@ import {
   AlertCircle, 
   ChevronDown, 
   ChevronUp,
-  MessageCircle,
   Share2,
   Package,
   Zap
 } from 'lucide-react';
 import { Product, ProductVariant, CartItem } from '../types';
-import { formatCurrency, formatWhatsAppUrl, buildDirectProductWhatsAppMessage } from '../utils/formatters';
+import { formatCurrency } from '../utils/formatters';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -387,8 +386,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </div>
 
             {/* Bottom Sticky Action Bar */}
-            <div className="mt-8 pt-4 border-t border-[#E7E5E0] flex flex-col gap-2.5">
-              <div className="flex flex-col sm:flex-row items-center gap-2.5">
+            <div className="mt-8 pt-4 border-t border-[#E7E5E0]">
+              <div className="flex flex-col sm:flex-row items-center gap-3">
                 {/* Add to Cart Button */}
                 <button
                   onClick={handleAddToCart}
@@ -433,27 +432,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   <span>⚡ Instant Buy Now</span>
                 </button>
               </div>
-
-              {/* Direct WhatsApp Ordering Button */}
-              <a
-                href={formatWhatsAppUrl(
-                  whatsappNumber,
-                  buildDirectProductWhatsAppMessage(
-                    product,
-                    selectedVariant,
-                    quantity,
-                    0,
-                    upiId || '7510447887@ybl'
-                  )
-                )}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full py-3 px-5 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border border-green-600/40 text-green-700 bg-green-50 hover:bg-green-100 transition-all active:scale-98"
-                title="Direct WhatsApp Order"
-              >
-                <MessageCircle className="w-4 h-4 text-green-600" />
-                <span>Direct WhatsApp Inquiry & Order</span>
-              </a>
             </div>
           </div>
         </div>

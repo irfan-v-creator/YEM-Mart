@@ -147,6 +147,23 @@ const requireAdminAuth = (req: express.Request, res: express.Response, next: exp
   next();
 };
 
+const requireOwnerOrManager = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const session = getAdminSession(req);
+  if (!session) {
+    return res.status(401).json({ 
+      error: 'Unauthorized: Valid Admin session token required. Please sign in via the Admin console.' 
+    });
+  }
+  if (session.role !== 'owner' && session.role !== 'manager') {
+    return res.status(403).json({ 
+      error: 'Forbidden: Owner or Manager privileges required for this administrative operation.' 
+    });
+  }
+  (req as any).adminSession = session;
+  req.headers['x-admin-actor'] = session.actorName;
+  next();
+};
+
 // --- ADMIN LOGIN / AUTH ENDPOINTS ---
 app.post('/api/admin/login', (req, res) => {
   const ip = getClientIp(req);
@@ -347,7 +364,7 @@ app.post('/api/products', requireAdminAuth, async (req, res) => {
   res.status(201).json(result.product);
 });
 
-app.delete('/api/products/:id', requireAdminAuth, async (req, res) => {
+app.delete('/api/products/:id', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const success = await store.deleteProduct(req.params.id, actor);
   if (!success) return res.status(404).json({ error: 'Product not found' });
@@ -447,7 +464,7 @@ app.post('/api/orders/track', (req, res) => {
 });
 
 // --- INVENTORY STOCK ADJUSTMENT (Admin-only) ---
-app.post('/api/inventory/adjust', requireAdminAuth, async (req, res) => {
+app.post('/api/inventory/adjust', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const { productId, variantSku, newStock, reason } = req.body;
   if (!productId || newStock === undefined) {
@@ -466,7 +483,7 @@ app.get('/api/settings', async (req, res) => {
   res.json(store.getSettings());
 });
 
-app.put('/api/settings', requireAdminAuth, async (req, res) => {
+app.put('/api/settings', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const updated = await store.updateSettings(req.body, actor);
   res.json(updated);
@@ -487,13 +504,13 @@ app.get('/api/coupons', requireAdminAuth, (req, res) => {
   res.json(store.getCoupons());
 });
 
-app.post('/api/coupons', requireAdminAuth, async (req, res) => {
+app.post('/api/coupons', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const saved = await store.saveCoupon(req.body, actor);
   res.json(saved);
 });
 
-app.delete('/api/coupons/:id', requireAdminAuth, async (req, res) => {
+app.delete('/api/coupons/:id', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const success = await store.deleteCoupon(req.params.id, actor);
   if (!success) return res.status(404).json({ error: 'Coupon not found' });
