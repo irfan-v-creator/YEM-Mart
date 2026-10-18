@@ -1,5 +1,5 @@
 import React from 'react';
-import { Heart, Star, ShoppingBag, Eye, AlertCircle } from 'lucide-react';
+import { Heart, Star, ShoppingBag, Eye, AlertCircle, Package } from 'lucide-react';
 import { Product } from '../types';
 import { formatCurrency } from '../utils/formatters';
 
@@ -71,14 +71,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         onClick={() => onOpenProduct(product)}
         className="w-full aspect-square bg-[#F7F6F2] relative cursor-pointer overflow-hidden p-4 flex items-center justify-center border-b border-neutral-100"
       >
-        <img
-          src={product.mainImage}
-          alt={product.name}
-          className={`max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-105 ${
-            isOutOfStock ? 'opacity-50 grayscale' : ''
-          }`}
-          loading="lazy"
-        />
+        {product.mainImage && product.mainImage.trim() ? (
+          <img
+            src={product.mainImage}
+            alt={product.name}
+            className={`max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-105 ${
+              isOutOfStock ? 'opacity-50 grayscale' : ''
+            }`}
+            loading="lazy"
+          />
+        ) : (
+          <Package className="w-12 h-12 text-neutral-300" />
+        )}
 
         {/* Quick View Button on Hover */}
         <div className="absolute inset-0 bg-[#171717]/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">

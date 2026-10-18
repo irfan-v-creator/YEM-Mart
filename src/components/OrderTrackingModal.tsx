@@ -12,7 +12,8 @@ import {
   Phone,
   MapPin,
   Calendar,
-  Lock
+  Lock,
+  Package
 } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
 import { formatCurrency, formatDate, maskPhone, maskName } from '../utils/formatters';
@@ -391,7 +392,11 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 {trackedOrder.items.map((it, idx) => (
                   <div key={idx} className="flex items-center justify-between text-xs py-1.5 border-b border-[#F7F6F2]">
                     <div className="flex items-center gap-2">
-                      <img src={it.image} alt="" className="w-8 h-8 rounded object-contain bg-[#F7F6F2] p-0.5 border" />
+                      {it.image && it.image.trim() ? (
+                        <img src={it.image} alt={it.productName || 'Order item'} className="w-8 h-8 rounded object-contain bg-[#F7F6F2] p-0.5 border" />
+                      ) : (
+                        <Package className="w-8 h-8 text-neutral-400 p-1 bg-[#F7F6F2] rounded border shrink-0" />
+                      )}
                       <div>
                         <p className="font-semibold text-[#171717]">{it.productName}</p>
                         {it.variantName && <p className="text-[10px] text-neutral-400">{it.variantName}</p>}

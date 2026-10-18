@@ -267,7 +267,7 @@ export function generateOrderReceiptMessage(order: Order, supportWhatsApp = '751
     : 'No items recorded';
 
   const discountLine = (order.discountAmount && order.discountAmount > 0)
-    ? `\n• Discount${order.couponCode ? ` (${order.couponCode})` : ''}: -₹${order.discountAmount.toLocaleString('en-IN')}`
+    ? `\n• Discounts${order.couponCode ? ` (Coupon: ${order.couponCode})` : ''}: -₹${order.discountAmount.toLocaleString('en-IN')}`
     : '';
 
   const deliveryStr = order.deliveryFee === 0 
@@ -276,32 +276,42 @@ export function generateOrderReceiptMessage(order: Order, supportWhatsApp = '751
 
   const paymentStr = order.paymentMethod === 'cod'
     ? '💵 Cash on Delivery (Pay at Doorstep)'
-    : `⚡ Prepaid UPI (${order.paymentRef || order.utrNumber ? `UTR: ${order.paymentRef || order.utrNumber}` : 'Verified'})`;
+    : `⚡ Prepaid UPI (${order.paymentRef || order.utrNumber ? `UTR: ${order.paymentRef || order.utrNumber}` : order.paymentStatus === 'verified' ? 'Verified' : 'Pending Verification'})`;
 
-  const statusStr = (order.status || 'awaiting_confirmation').replace(/_/g, ' ').toUpperCase();
+  const statusMap: Record<string, string> = {
+    prepared: 'Order Prepared',
+    whatsapp_pending: 'Awaiting Confirmation',
+    payment_submitted: 'Payment Under Review',
+    confirmed: 'Order Confirmed',
+    processing: 'Processing & Packed',
+    shipped: 'Dispatched / In Transit',
+    delivered: 'Delivered Successfully',
+    cancelled: 'Cancelled',
+  };
+  const statusStr = statusMap[order.status] || (order.status || 'awaiting_confirmation').replace(/_/g, ' ').toUpperCase();
 
-  return `🧾 *YEM MART • ORDER RECEIPT & INVOICE*
+  return `🧾 *YEM MART • OFFICIAL ORDER RECEIPT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🆔 *Order ID:* \`${order.id}\`
 📅 *Date:* ${formatDate(order.createdAt)}
-👤 *Customer:* ${customerName}
+📊 *Order Status:* ${statusStr}
+👤 *Customer Name:* ${customerName}
 📞 *Mobile:* ${customerPhone}
-📍 *Delivery Destination:* ${destination}${landmarkLine}
+📍 *Delivery Address:* ${destination}${landmarkLine}
 
-📦 *ORDERED ITEMS (${order.items.reduce((sum, i) => sum + i.quantity, 0)} Units):*
+📦 *ITEMIZED PRODUCTS LIST (${order.items.reduce((sum, i) => sum + i.quantity, 0)} Units):*
 ${itemsText}
 
-💰 *PAYMENT & BILLING SUMMARY:*
+💰 *BILLING & SUMMARY:*
 • Subtotal: ₹${order.subtotal.toLocaleString('en-IN')}${discountLine}
 • Delivery Charge: ${deliveryStr}
-• *Grand Total Payable:* *₹${order.grandTotal.toLocaleString('en-IN')}*
+• *Grand Total:* *₹${order.grandTotal.toLocaleString('en-IN')}*
 • *Payment Mode:* ${paymentStr}
-• *Current Order Status:* *${statusStr}*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 *Customer Care WhatsApp:* +91 ${supportWhatsApp.replace(/[^0-9]/g, '').slice(-10)}
-🛍️ *Store:* YEM MART Kerala — Authentic Products, Express Kerala Delivery
-_Thank you for choosing YEM MART!_`;
+💬 *Store Support WhatsApp:* +91 ${supportWhatsApp.replace(/[^0-9]/g, '').slice(-10)}
+🛍️ *YEM MART Kerala* — Express Delivery Across All 14 Districts
+_Thank you for shopping with YEM MART!_`;
 }
 
 /**

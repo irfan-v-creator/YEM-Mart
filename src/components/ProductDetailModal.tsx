@@ -140,13 +140,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           <div className="flex flex-col gap-4">
             {/* Main Image with contain behavior */}
             <div className="w-full aspect-square bg-[#F7F6F2] rounded-2xl p-6 flex items-center justify-center border border-[#E7E5E0] relative overflow-hidden">
-              <img
-                src={selectedImage}
-                alt={product.name}
-                className={`max-h-full max-w-full object-contain transition-all duration-300 ${
-                  isOutOfStock ? 'opacity-50 grayscale' : ''
-                }`}
-              />
+              {selectedImage && selectedImage.trim() ? (
+                <img
+                  src={selectedImage}
+                  alt={product.name}
+                  className={`max-h-full max-w-full object-contain transition-all duration-300 ${
+                    isOutOfStock ? 'opacity-50 grayscale' : ''
+                  }`}
+                />
+              ) : (
+                <Package className="w-16 h-16 text-neutral-300" />
+              )}
 
               {product.discountPercent && product.discountPercent > 0 && (
                 <span className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-[#171717] text-[#C9A44C] text-xs font-extrabold uppercase">
@@ -176,7 +180,11 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         : 'border-[#E7E5E0] hover:border-neutral-400'
                     }`}
                   >
-                    <img src={img} alt="" className="w-full h-full object-contain" />
+                    {img && img.trim() ? (
+                      <img src={img} alt="" className="w-full h-full object-contain" />
+                    ) : (
+                      <Package className="w-6 h-6 text-neutral-300" />
+                    )}
                   </button>
                 ))}
               </div>
