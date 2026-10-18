@@ -168,6 +168,8 @@ export interface Order {
   grandTotal: number;
   status: OrderStatus;
   paymentStatus: PaymentStatus;
+  paymentMethod?: 'upi' | 'cod' | string;
+  paymentRef?: string;
   utrNumber?: string;
   paymentSubmittedAt?: string;
   cancellationReason?: string;

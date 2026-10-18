@@ -249,4 +249,75 @@ export function formatWhatsAppUrl(number?: string, text?: string): string {
   return `https://wa.me/${cleanNumber}${query}`;
 }
 
+/**
+ * Generates a clean, professional, itemized receipt message for customer support & WhatsApp sharing.
+ */
+export function generateOrderReceiptMessage(order: Order, supportWhatsApp = '7510447887'): string {
+  const customerName = order.customer.fullName || 'Valued Customer';
+  const customerPhone = order.customer.phone || 'N/A';
+  const destination = `${order.customer.address}, ${order.customer.pincode}${order.customer.district ? ` (${order.customer.district}, Kerala)` : ''}`;
+  const landmarkLine = order.customer.landmark ? `\n📌 *Landmark:* ${order.customer.landmark}` : '';
+
+  const normalizedItems = normalizeOrderItems(order.items);
+  const itemsText = normalizedItems.length > 0
+    ? normalizedItems.map((item, idx) => {
+        const optionStr = item.variant ? ` (${item.variant})` : '';
+        return `${idx + 1}. *${item.name}*${optionStr}\n   ▫️ Qty: ${item.quantity} × ₹${item.unitPrice.toLocaleString('en-IN')} = *₹${item.totalPrice.toLocaleString('en-IN')}*`;
+      }).join('\n')
+    : 'No items recorded';
+
+  const discountLine = (order.discountAmount && order.discountAmount > 0)
+    ? `\n• Discount${order.couponCode ? ` (${order.couponCode})` : ''}: -₹${order.discountAmount.toLocaleString('en-IN')}`
+    : '';
+
+  const deliveryStr = order.deliveryFee === 0 
+    ? '🟢 FREE (Express Kerala Delivery)' 
+    : `₹${order.deliveryFee.toLocaleString('en-IN')}`;
+
+  const paymentStr = order.paymentMethod === 'cod'
+    ? '💵 Cash on Delivery (Pay at Doorstep)'
+    : `⚡ Prepaid UPI (${order.paymentRef || order.utrNumber ? `UTR: ${order.paymentRef || order.utrNumber}` : 'Verified'})`;
+
+  const statusStr = (order.status || 'awaiting_confirmation').replace(/_/g, ' ').toUpperCase();
+
+  return `🧾 *YEM MART • ORDER RECEIPT & INVOICE*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🆔 *Order ID:* \`${order.id}\`
+📅 *Date:* ${formatDate(order.createdAt)}
+👤 *Customer:* ${customerName}
+📞 *Mobile:* ${customerPhone}
+📍 *Delivery Destination:* ${destination}${landmarkLine}
+
+📦 *ORDERED ITEMS (${order.items.reduce((sum, i) => sum + i.quantity, 0)} Units):*
+${itemsText}
+
+💰 *PAYMENT & BILLING SUMMARY:*
+• Subtotal: ₹${order.subtotal.toLocaleString('en-IN')}${discountLine}
+• Delivery Charge: ${deliveryStr}
+• *Grand Total Payable:* *₹${order.grandTotal.toLocaleString('en-IN')}*
+• *Payment Mode:* ${paymentStr}
+• *Current Order Status:* *${statusStr}*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💬 *Customer Care WhatsApp:* +91 ${supportWhatsApp.replace(/[^0-9]/g, '').slice(-10)}
+🛍️ *Store:* YEM MART Kerala — Authentic Products, Express Kerala Delivery
+_Thank you for choosing YEM MART!_`;
+}
+
+/**
+ * Downloads a clean formatted order receipt text file on the user's device.
+ */
+export function downloadOrderReceiptText(order: Order, supportWhatsApp = '7510447887'): void {
+  const receiptText = generateOrderReceiptMessage(order, supportWhatsApp);
+  const blob = new Blob([receiptText], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `YEM-Receipt-${order.id}.txt`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
 

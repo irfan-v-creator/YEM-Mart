@@ -1404,6 +1404,7 @@ export default function App() {
         orders={orders}
         onRequestCancellation={handleRequestCancellation}
         onExploreShop={scrollToShop}
+        whatsappNumber={settings.whatsappNumber}
       />
 
       {/* Order Tracking Modal with 2FA Lookup */}

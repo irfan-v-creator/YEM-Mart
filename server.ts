@@ -6,11 +6,15 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { store } from './server/store';
+import { isSupabaseConfigured, getSupabaseClient } from './server/supabase';
+import { Product } from './src/types';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+let viteDevServer: any = null;
 
 const app = express();
 
@@ -106,106 +110,311 @@ Sitemap: ${baseUrl}/sitemap.xml
   res.send(robotsTxt);
 });
 
-// Dynamic Pre-rendered Open Graph & Schema.org HTML generator for WhatsApp / Search Engine Crawlers
-function renderSeoHtml(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (req.path.startsWith('/api') || req.path === '/sitemap.xml' || req.path === '/robots.txt') {
-    return next();
-  }
+function escapeHtmlAttr(str: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
-  let indexPath = path.join(__dirname, 'dist', 'index.html');
-  if (!fs.existsSync(indexPath)) {
-    indexPath = path.join(__dirname, 'index.html');
-  }
+function escapeHtmlText(str: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
-  if (!fs.existsSync(indexPath)) {
-    return next();
+function getBaseIndexHtml(): { html: string; isSource: boolean } {
+  const isProd = process.env.NODE_ENV === 'production';
+  const distPaths = [
+    path.join(__dirname, 'dist', 'index.html'),
+    path.join(__dirname, '..', 'dist', 'index.html'),
+    path.join(process.cwd(), 'dist', 'index.html'),
+  ];
+  const srcPaths = [
+    path.join(__dirname, 'index.html'),
+    path.join(__dirname, '..', 'index.html'),
+    path.join(process.cwd(), 'index.html'),
+  ];
+
+  const searchOrder = isProd ? [...distPaths, ...srcPaths] : [...srcPaths, ...distPaths];
+  for (const candidate of searchOrder) {
+    if (fs.existsSync(candidate)) {
+      try {
+        return {
+          html: fs.readFileSync(candidate, 'utf-8'),
+          isSource: !candidate.includes('dist'),
+        };
+      } catch {}
+    }
   }
+  return { html: '', isSource: false };
+}
+
+// Helper to inject clean, high-priority Open Graph, Twitter & Schema.org tags into HTML
+function injectSeoMetaTags(html: string, tags: {
+  title: string;
+  description: string;
+  url: string;
+  imageUrl: string;
+  type?: string;
+  siteName?: string;
+  keywords?: string;
+  jsonLd?: object;
+}): string {
+  // Strip existing titles, descriptions, og, twitter, and canonical links to avoid duplicate or conflicting tags
+  html = html.replace(/<title>[\s\S]*?<\/title>/gi, '');
+  html = html.replace(/<meta\s+name=["'](description|keywords)["'][^>]*>/gi, '');
+  html = html.replace(/<meta\s+property=["']og:[^"']+["'][^>]*>/gi, '');
+  html = html.replace(/<meta\s+name=["']twitter:[^"']+["'][^>]*>/gi, '');
+  html = html.replace(/<link\s+rel=["']canonical["'][^>]*>/gi, '');
+
+  const safeTitle = escapeHtmlText(tags.title);
+  const safeAttrTitle = escapeHtmlAttr(tags.title);
+  const safeDesc = escapeHtmlAttr(tags.description);
+  const safeUrl = escapeHtmlAttr(tags.url);
+  const safeImg = escapeHtmlAttr(tags.imageUrl);
+  const safeSiteName = escapeHtmlAttr(tags.siteName || 'YEM MART');
+  const safeKeywords = tags.keywords ? `<meta name="keywords" content="${escapeHtmlAttr(tags.keywords)}" />` : '';
+
+  const metaBlock = `
+    <title>${safeTitle}</title>
+    <meta name="description" content="${safeDesc}" />
+    ${safeKeywords}
+    <link rel="canonical" href="${safeUrl}" />
+
+    <!-- Open Graph / WhatsApp / Facebook Preview -->
+    <meta property="og:type" content="${tags.type || 'website'}" />
+    <meta property="og:site_name" content="${safeSiteName}" />
+    <meta property="og:title" content="${safeAttrTitle}" />
+    <meta property="og:description" content="${safeDesc}" />
+    <meta property="og:url" content="${safeUrl}" />
+    <meta property="og:image" content="${safeImg}" />
+    <meta property="og:image:secure_url" content="${safeImg}" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="${safeAttrTitle}" />
+
+    <!-- Twitter / X Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${safeAttrTitle}" />
+    <meta name="twitter:description" content="${safeDesc}" />
+    <meta name="twitter:image" content="${safeImg}" />
+    <meta name="twitter:image:alt" content="${safeAttrTitle}" />
+    ${tags.jsonLd ? `<script type="application/ld+json">${JSON.stringify(tags.jsonLd)}</script>` : ''}
+  `;
+
+  return html.replace(/<head>/i, `<head>${metaBlock}`);
+}
+
+// Dedicated express route handler for /product/:id with full Supabase/Store lookup & absolute OG meta tags
+async function handleProductSeoRoute(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const rawId = (req.params.id || '').split('/')[0];
+  const prodId = decodeURIComponent(rawId).trim();
+  if (!prodId) return next();
 
   try {
-    let html = fs.readFileSync(indexPath, 'utf-8');
-    const host = req.get('host') || 'yemmart.in';
-    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
-    const baseUrl = `${protocol}://${host}`;
+    // 1. Fetch from Store in-memory cache
+    let product: Product | undefined = store.getProductById(prodId);
 
-    const prodMatch = req.path.match(/^\/product\/([^/?#]+)/i);
-    const catMatch = req.path.match(/^\/category\/([^/?#]+)/i);
+    // 2. Fallback to Supabase if available and not found in memory
+    if (!product && isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { data } = await supabase
+            .from('products')
+            .select('*')
+            .or(`id.eq.${prodId},sku.eq.${prodId}`)
+            .maybeSingle();
 
-    if (prodMatch) {
-      const prodId = decodeURIComponent(prodMatch[1]);
-      const product = store.getProductById(prodId);
-      if (product) {
-        const title = `${product.name} - Buy Online for ₹${product.price.toLocaleString('en-IN')} | YEM MART Kerala`;
-        const description = `Order authentic ${product.name} (${product.brand}) online at YEM MART. ${product.shortSummary || product.description.slice(0, 140)}. Fast Kerala express delivery across all 14 districts.`;
-        const image = product.mainImage || (product.images && product.images[0]) || '';
-        const pageUrl = `${baseUrl}/product/${product.id}`;
-
-        const productSchema = {
-          '@context': 'https://schema.org',
-          '@type': 'Product',
-          name: product.name,
-          image: product.images && product.images.length > 0 ? product.images : [product.mainImage],
-          description: product.description,
-          sku: product.sku,
-          brand: { '@type': 'Brand', name: product.brand },
-          offers: {
-            '@type': 'Offer',
-            url: pageUrl,
-            priceCurrency: 'INR',
-            price: product.price,
-            availability: product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
-            itemCondition: 'https://schema.org/NewCondition',
-            seller: { '@type': 'Organization', name: 'YEM MART' },
-          },
-          aggregateRating: product.rating ? {
-            '@type': 'AggregateRating',
-            ratingValue: product.rating,
-            reviewCount: product.reviewCount || 5,
-          } : undefined,
-        };
-
-        html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
-        html = html.replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${description}" />`);
-        html = html.replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${title}" />`);
-        html = html.replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${description}" />`);
-        html = html.replace(/<meta property="og:image" content=".*?" \/>/i, `<meta property="og:image" content="${image}" />`);
-        html = html.replace(/<meta property="og:type" content=".*?" \/>/i, `<meta property="og:type" content="product" />`);
-        html = html.replace(/<meta property="og:url" content=".*?" \/>/i, `<meta property="og:url" content="${pageUrl}" />`);
-        html = html.replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${title}" />`);
-        html = html.replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${description}" />`);
-        html = html.replace(/<meta name="twitter:image" content=".*?" \/>/i, `<meta name="twitter:image" content="${image}" />`);
-
-        const schemaTag = `<script type="application/ld+json">${JSON.stringify(productSchema)}</script>`;
-        html = html.replace('</head>', `${schemaTag}\n</head>`);
-
-        res.header('Content-Type', 'text/html; charset=utf-8');
-        return res.send(html);
+          if (data) {
+            product = {
+              id: data.id,
+              name: data.name,
+              brand: data.brand || 'YEM MART',
+              category: data.category || 'Others',
+              description: data.description || '',
+              shortSummary: data.short_summary || '',
+              highlights: data.highlights || [],
+              specs: data.specs || {},
+              price: Number(data.price),
+              originalPrice: data.original_price ? Number(data.original_price) : undefined,
+              discountPercent: data.discount_percent,
+              rating: data.rating ? Number(data.rating) : 4.5,
+              reviewCount: data.review_count || 12,
+              images: data.images || [],
+              mainImage: data.main_image || (data.images && data.images[0]) || '',
+              status: data.status || 'published',
+              stock: Number(data.stock ?? 10),
+              lowStockThreshold: data.low_stock_threshold ?? 5,
+              sku: data.sku || data.id,
+              tags: data.tags || [],
+              variants: data.variants || [],
+            } as Product;
+          }
+        }
+      } catch (dbErr) {
+        console.warn('Supabase product query error for SEO route:', dbErr);
       }
-    } else if (catMatch) {
-      const slug = decodeURIComponent(catMatch[1]);
-      const catName = slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ');
-      const title = `${catName} Collection - Authentic Kerala Online Shopping | YEM MART`;
-      const description = `Discover handcrafted & curated ${catName} at YEM MART. Authentic Kerala products, guaranteed genuine stock, transparent pricing, and fast delivery across Kerala.`;
-      const pageUrl = `${baseUrl}/category/${slug}`;
-
-      html = html.replace(/<title>.*?<\/title>/i, `<title>${title}</title>`);
-      html = html.replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${description}" />`);
-      html = html.replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${title}" />`);
-      html = html.replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${description}" />`);
-      html = html.replace(/<meta property="og:url" content=".*?" \/>/i, `<meta property="og:url" content="${pageUrl}" />`);
-
-      res.header('Content-Type', 'text/html; charset=utf-8');
-      return res.send(html);
     }
 
-    return next();
+    if (!product) {
+      return next();
+    }
+
+    // Determine absolute base URL
+    const host = req.get('x-forwarded-host') || req.get('host') || 'yemmart.in';
+    const protocol = req.get('x-forwarded-proto') === 'https' || req.protocol === 'https' ? 'https' : 'http';
+    const baseUrl = `${protocol}://${host}`;
+    const pageUrl = `${baseUrl}/product/${encodeURIComponent(product.id)}`;
+
+    // Guarantee absolute image URL for WhatsApp / social preview scrapers
+    let absoluteImageUrl = product.mainImage || (product.images && product.images[0]) || '';
+    if (absoluteImageUrl) {
+      if (absoluteImageUrl.startsWith('//')) {
+        absoluteImageUrl = `https:${absoluteImageUrl}`;
+      } else if (!absoluteImageUrl.startsWith('http://') && !absoluteImageUrl.startsWith('https://')) {
+        absoluteImageUrl = `${baseUrl}${absoluteImageUrl.startsWith('/') ? '' : '/'}${absoluteImageUrl}`;
+      }
+    } else {
+      absoluteImageUrl = 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?auto=format&fit=crop&w=1200&h=630&q=80';
+    }
+
+    const title = `${product.name} - Buy Online for ₹${product.price.toLocaleString('en-IN')} | YEM MART Kerala`;
+    const description = `Order authentic ${product.name} (${product.brand}) online at YEM MART. ${product.shortSummary || product.description.slice(0, 140)}. Fast Kerala express delivery across all 14 districts.`;
+
+    const { html: rawHtml, isSource } = getBaseIndexHtml();
+    if (!rawHtml) {
+      return next();
+    }
+
+    let html = rawHtml;
+    // In dev mode with Vite, transform with Vite plugins if dev server active
+    if (isSource && viteDevServer) {
+      try {
+        html = await viteDevServer.transformIndexHtml(req.originalUrl || req.url, rawHtml);
+      } catch {}
+    }
+
+    // Build Product Schema JSON-LD
+    const productSchema = {
+      '@context': 'https://schema.org',
+      '@type': 'Product',
+      name: product.name,
+      image: [absoluteImageUrl],
+      description: product.description || product.shortSummary,
+      sku: product.sku,
+      brand: { '@type': 'Brand', name: product.brand },
+      offers: {
+        '@type': 'Offer',
+        url: pageUrl,
+        priceCurrency: 'INR',
+        price: product.price,
+        availability: product.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+        itemCondition: 'https://schema.org/NewCondition',
+        seller: { '@type': 'Organization', name: 'YEM MART' },
+      },
+      aggregateRating: product.rating ? {
+        '@type': 'AggregateRating',
+        ratingValue: product.rating,
+        reviewCount: product.reviewCount || 5,
+      } : undefined,
+    };
+
+    html = injectSeoMetaTags(html, {
+      title,
+      description,
+      url: pageUrl,
+      imageUrl: absoluteImageUrl,
+      type: 'website',
+      siteName: 'YEM MART',
+      keywords: `${product.name}, ${product.brand}, ${product.category}, Kerala Online Shopping, YEM MART`,
+      jsonLd: productSchema,
+    });
+
+    res.header('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
   } catch (err) {
-    console.error('Error rendering SEO HTML:', err);
+    console.error('Error in handleProductSeoRoute:', err);
     return next();
   }
 }
 
-app.get('/product/:id', renderSeoHtml);
-app.get('/category/:slug', renderSeoHtml);
+// Dedicated express route handler for /category/:slug with absolute OG meta tags
+async function handleCategorySeoRoute(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const rawSlug = (req.params.slug || '').split('/')[0];
+  const slug = decodeURIComponent(rawSlug).trim();
+  if (!slug) return next();
+
+  try {
+    const host = req.get('x-forwarded-host') || req.get('host') || 'yemmart.in';
+    const protocol = req.get('x-forwarded-proto') === 'https' || req.protocol === 'https' ? 'https' : 'http';
+    const baseUrl = `${protocol}://${host}`;
+    const pageUrl = `${baseUrl}/category/${encodeURIComponent(slug)}`;
+
+    const catName = slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' ');
+    const title = `${catName} Collection - Authentic Kerala Online Shopping | YEM MART`;
+    const description = `Discover handcrafted & curated ${catName} at YEM MART. Authentic Kerala products, guaranteed genuine stock, transparent pricing, and fast delivery across Kerala.`;
+    const categoryImageUrl = 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?auto=format&fit=crop&w=1200&h=630&q=80';
+
+    const { html: rawHtml, isSource } = getBaseIndexHtml();
+    if (!rawHtml) {
+      return next();
+    }
+
+    let html = rawHtml;
+    if (isSource && viteDevServer) {
+      try {
+        html = await viteDevServer.transformIndexHtml(req.originalUrl || req.url, rawHtml);
+      } catch {}
+    }
+
+    html = injectSeoMetaTags(html, {
+      title,
+      description,
+      url: pageUrl,
+      imageUrl: categoryImageUrl,
+      type: 'website',
+      siteName: 'YEM MART',
+      keywords: `${catName}, Kerala Shopping, Authentic Kerala Products, YEM MART`,
+    });
+
+    res.header('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
+  } catch (err) {
+    console.error('Error in handleCategorySeoRoute:', err);
+    return next();
+  }
+}
+
+// Universal SEO dispatcher for production static serving and SPA fallback
+async function renderSeoHtml(req: express.Request, res: express.Response, fallback: () => void) {
+  const urlPath = req.path;
+  const prodMatch = urlPath.match(/^\/product\/([^/?#]+)/i);
+  if (prodMatch) {
+    req.params = req.params || {};
+    req.params.id = prodMatch[1];
+    return handleProductSeoRoute(req, res, fallback as any);
+  }
+  const catMatch = urlPath.match(/^\/category\/([^/?#]+)/i);
+  if (catMatch) {
+    req.params = req.params || {};
+    req.params.slug = catMatch[1];
+    return handleCategorySeoRoute(req, res, fallback as any);
+  }
+  fallback();
+}
+
+app.get('/product/:id', handleProductSeoRoute);
+app.get('/product/:id/*', handleProductSeoRoute);
+app.get('/category/:slug', handleCategorySeoRoute);
+app.get('/category/:slug/*', handleCategorySeoRoute);
 
 // --- ADMIN AUTHENTICATION & SECURITY STATE ---
 const FALLBACK_ADMIN_PASSWORD = 'yem-admin-2026';
@@ -794,6 +1003,7 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+    viteDevServer = vite;
     app.use(vite.middlewares);
   }
 

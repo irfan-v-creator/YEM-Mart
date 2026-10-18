@@ -17,10 +17,20 @@ import {
   ChevronDown,
   ChevronUp,
   XCircle,
-  Phone
+  Phone,
+  Download,
+  Share2,
+  MessageCircle,
+  FileText
 } from 'lucide-react';
 import { Order, OrderStatus } from '../types';
-import { formatCurrency, formatDate } from '../utils/formatters';
+import { 
+  formatCurrency, 
+  formatDate, 
+  generateOrderReceiptMessage, 
+  downloadOrderReceiptText, 
+  formatWhatsAppUrl 
+} from '../utils/formatters';
 import { api } from '../utils/api';
 
 interface MyOrdersModalProps {
@@ -29,6 +39,7 @@ interface MyOrdersModalProps {
   orders: Order[];
   onRequestCancellation: (orderId: string, reason: string) => void;
   onExploreShop?: () => void;
+  whatsappNumber?: string;
 }
 
 export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
@@ -37,6 +48,7 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
   orders,
   onRequestCancellation,
   onExploreShop,
+  whatsappNumber = '7510447887',
 }) => {
   const [activeTab, setActiveTab] = useState<'recent' | 'lookup'>('recent');
   const [searchInput, setSearchInput] = useState('');
@@ -94,6 +106,28 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
     navigator.clipboard.writeText(id);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const [copiedReceiptId, setCopiedReceiptId] = useState<string | null>(null);
+
+  const handleShareReceiptWhatsApp = (order: Order, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const text = generateOrderReceiptMessage(order, whatsappNumber);
+    const url = formatWhatsAppUrl(whatsappNumber, text);
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleDownloadReceipt = (order: Order, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    downloadOrderReceiptText(order, whatsappNumber);
+  };
+
+  const handleCopyReceiptText = (order: Order, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const text = generateOrderReceiptMessage(order, whatsappNumber);
+    navigator.clipboard.writeText(text);
+    setCopiedReceiptId(order.id);
+    setTimeout(() => setCopiedReceiptId(null), 2500);
   };
 
   const handleLookup = async (e: React.FormEvent) => {
@@ -317,13 +351,21 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
                             </p>
                           </div>
 
-                          <div className="flex items-center justify-between sm:justify-end gap-3">
+                          <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3">
                             <div className="text-left sm:text-right">
                               <p className="text-[10px] uppercase font-bold text-neutral-400">Grand Total</p>
                               <p className="text-sm font-black text-[#171717]">
                                 {formatCurrency(order.grandTotal)}
                               </p>
                             </div>
+                            <button
+                              onClick={(e) => handleShareReceiptWhatsApp(order, e)}
+                              className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs flex items-center gap-1.5 transition-all shadow-2xs hover:border-emerald-300"
+                              title="Share receipt directly to WhatsApp support"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Receipt</span>
+                            </button>
                             <button
                               onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
                               className="px-3 py-1.5 rounded-xl border border-neutral-300 text-xs font-bold text-neutral-700 hover:bg-white flex items-center gap-1 transition-all"
@@ -418,6 +460,57 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
                               <div className="pt-2 border-t border-neutral-100 flex justify-between font-bold text-xs text-[#171717]">
                                 <span>Total Paid / Payable</span>
                                 <span className="text-[#C9A44C]">{formatCurrency(order.grandTotal)}</span>
+                              </div>
+                            </div>
+
+                            {/* Download & Share Receipt Card */}
+                            <div className="bg-white p-3.5 rounded-xl border border-neutral-200/80 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 font-bold text-[#171717]">
+                                  <FileText className="w-3.5 h-3.5 text-[#C9A44C]" />
+                                  <span>Official Order Receipt & WhatsApp Share</span>
+                                </div>
+                                <span className="text-[10px] text-neutral-400 font-mono">Invoice #{order.id}</span>
+                              </div>
+                              <p className="text-[11px] text-neutral-500">
+                                Send a clean, itemized receipt to YEM MART WhatsApp support (+91 {whatsappNumber.slice(-10)}) or download your invoice.
+                              </p>
+                              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                <button
+                                  onClick={(e) => handleShareReceiptWhatsApp(order, e)}
+                                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs active:scale-95"
+                                  title="Send formatted receipt to Store Support on WhatsApp"
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5" />
+                                  <span>Share via WhatsApp</span>
+                                </button>
+
+                                <button
+                                  onClick={(e) => handleDownloadReceipt(order, e)}
+                                  className="px-3 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-[#171717] font-semibold text-xs flex items-center gap-1.5 transition-all border border-neutral-200 active:scale-95"
+                                  title="Download clean text receipt file (.txt)"
+                                >
+                                  <Download className="w-3.5 h-3.5 text-neutral-600" />
+                                  <span>Download Receipt</span>
+                                </button>
+
+                                <button
+                                  onClick={(e) => handleCopyReceiptText(order, e)}
+                                  className="px-3 py-2 rounded-xl bg-white hover:bg-neutral-50 text-neutral-700 font-semibold text-xs flex items-center gap-1.5 transition-all border border-neutral-200 active:scale-95"
+                                  title="Copy complete receipt to clipboard"
+                                >
+                                  {copiedReceiptId === order.id ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span className="text-emerald-700 font-bold">Copied Receipt!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3.5 h-3.5 text-neutral-500" />
+                                      <span>Copy Receipt</span>
+                                    </>
+                                  )}
+                                </button>
                               </div>
                             </div>
 
@@ -570,6 +663,54 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
                     <p className="text-neutral-700">
                       {lookupResult.customer.address}, {lookupResult.customer.pincode}
                     </p>
+                  </div>
+
+                  {/* Download & Share Receipt Card for Lookup */}
+                  <div className="bg-[#F7F6F2] p-3.5 rounded-xl border border-[#E7E5E0] space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-bold text-[#171717] text-xs">
+                        <FileText className="w-3.5 h-3.5 text-[#C9A44C]" />
+                        <span>Order Receipt & WhatsApp Support</span>
+                      </div>
+                      <span className="text-[10px] text-neutral-400 font-mono">Invoice #{lookupResult.id}</span>
+                    </div>
+                    <p className="text-[11px] text-neutral-500">
+                      Need help or confirmation? Send this clean receipt directly to store WhatsApp support (+91 {whatsappNumber.slice(-10)}) or download your receipt.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                      <button
+                        onClick={(e) => handleShareReceiptWhatsApp(lookupResult, e)}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs active:scale-95"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>Share via WhatsApp</span>
+                      </button>
+
+                      <button
+                        onClick={(e) => handleDownloadReceipt(lookupResult, e)}
+                        className="px-3 py-2 rounded-xl bg-white hover:bg-neutral-100 text-[#171717] font-semibold text-xs flex items-center gap-1.5 transition-all border border-neutral-300 active:scale-95"
+                      >
+                        <Download className="w-3.5 h-3.5 text-neutral-600" />
+                        <span>Download Receipt</span>
+                      </button>
+
+                      <button
+                        onClick={(e) => handleCopyReceiptText(lookupResult, e)}
+                        className="px-3 py-2 rounded-xl bg-white hover:bg-neutral-100 text-neutral-700 font-semibold text-xs flex items-center gap-1.5 transition-all border border-neutral-300 active:scale-95"
+                      >
+                        {copiedReceiptId === lookupResult.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="text-emerald-700 font-bold">Copied Receipt!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5 text-neutral-500" />
+                            <span>Copy Receipt</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

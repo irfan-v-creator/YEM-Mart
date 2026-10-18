@@ -15,11 +15,11 @@
     },
     {
       "source": "/product/:path*",
-      "destination": "/index.html"
+      "destination": "/api/index.ts"
     },
     {
       "source": "/category/:path*",
-      "destination": "/index.html"
+      "destination": "/api/index.ts"
     },
     {
       "source": "/admin/:path*",

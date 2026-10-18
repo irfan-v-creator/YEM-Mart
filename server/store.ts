@@ -491,7 +491,9 @@ class Store {
   }
 
   public getProductById(id: string): Product | undefined {
-    return this.data.products.find(p => p.id === id);
+    if (!id) return undefined;
+    const clean = id.trim().toLowerCase();
+    return this.data.products.find(p => p.id.toLowerCase() === clean || (p.sku && p.sku.toLowerCase() === clean));
   }
 
   public async saveProduct(product: Partial<Product> & { id: string }, actor = 'Admin'): Promise<{ success: boolean; product?: Product; error?: string }> {
