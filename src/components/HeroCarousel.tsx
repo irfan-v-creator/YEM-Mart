@@ -33,11 +33,13 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
       <div className="relative rounded-2xl overflow-hidden bg-[#171717] text-white shadow-lg min-h-[320px] sm:min-h-[380px] flex flex-col justify-between border border-neutral-800">
         {/* Background Image with Ambient Gradient Overlay */}
         <div className="absolute inset-0 z-0">
-          <img
-            src={currentBanner.image}
-            alt={currentBanner.title}
-            className="w-full h-full object-cover object-center opacity-30 mix-blend-luminosity scale-105 transition-transform duration-700"
-          />
+          {currentBanner.image && currentBanner.image.trim() ? (
+            <img
+              src={currentBanner.image}
+              alt={currentBanner.title}
+              className="w-full h-full object-cover object-center opacity-30 mix-blend-luminosity scale-105 transition-transform duration-700"
+            />
+          ) : null}
           <div className="absolute inset-0 bg-gradient-to-r from-[#171717] via-[#171717]/90 to-transparent" />
         </div>
 

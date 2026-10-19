@@ -11,7 +11,8 @@ import {
   ArrowRight,
   ExternalLink,
   ChevronDown,
-  PackageCheck
+  PackageCheck,
+  Package
 } from 'lucide-react';
 import { Product, Category, StoreSettings } from '../types';
 import { formatCurrency } from '../utils/formatters';
@@ -170,11 +171,15 @@ export const Header: React.FC<HeaderProps> = ({
                       }}
                       className="px-3 py-2 flex items-center gap-3 hover:bg-[#F7F6F2] cursor-pointer transition-colors"
                     >
-                      <img
-                        src={prod.mainImage}
-                        alt={prod.name}
-                        className="w-10 h-10 object-contain rounded bg-[#F7F6F2] p-1 border border-neutral-100"
-                      />
+                      {prod.mainImage && prod.mainImage.trim() ? (
+                        <img
+                          src={prod.mainImage}
+                          alt={prod.name}
+                          className="w-10 h-10 object-contain rounded bg-[#F7F6F2] p-1 border border-neutral-100 shrink-0"
+                        />
+                      ) : (
+                        <Package className="w-10 h-10 text-neutral-400 p-2 bg-[#F7F6F2] rounded border border-neutral-100 shrink-0" />
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-[#171717] truncate">{prod.name}</p>
                         <div className="flex items-center gap-2 text-xs text-neutral-500">

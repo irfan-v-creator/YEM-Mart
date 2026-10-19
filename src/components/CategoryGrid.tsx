@@ -113,11 +113,13 @@ export const CategoryGrid: React.FC<CategoryGridProps> = ({
               }`}
             >
               <div className="w-14 h-14 rounded-full overflow-hidden mb-2.5 relative bg-[#F7F6F2] flex items-center justify-center border border-neutral-100 group-hover:scale-105 transition-transform">
-                <img
-                  src={cat.image}
-                  alt={cat.name}
-                  className="w-full h-full object-cover"
-                />
+                {cat.image && cat.image.trim() ? (
+                  <img
+                    src={cat.image}
+                    alt={cat.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : null}
                 <div className="absolute inset-0 bg-[#171717]/20 group-hover:bg-[#171717]/10 transition-colors" />
                 <div className="absolute inset-0 flex items-center justify-center text-white drop-shadow">
                   {cat.icon}

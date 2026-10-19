@@ -9,7 +9,8 @@ import {
   ShieldCheck, 
   AlertCircle,
   Tag,
-  Check
+  Check,
+  Package
 } from 'lucide-react';
 import { CartItem, StoreSettings, Coupon } from '../types';
 import { formatCurrency } from '../utils/formatters';
@@ -150,11 +151,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               return (
                 <div key={item.id} className="py-4 first:pt-0 last:pb-0 flex gap-4">
                   {/* Thumbnail */}
-                  <img
-                    src={item.product.mainImage}
-                    alt={item.product.name}
-                    className="w-20 h-20 rounded-xl object-contain bg-[#F7F6F2] p-1.5 border border-[#E7E5E0] shrink-0"
-                  />
+                  {item.product.mainImage && item.product.mainImage.trim() ? (
+                    <img
+                      src={item.product.mainImage}
+                      alt={item.product.name}
+                      className="w-20 h-20 rounded-xl object-contain bg-[#F7F6F2] p-1.5 border border-[#E7E5E0] shrink-0"
+                    />
+                  ) : (
+                    <div className="w-20 h-20 rounded-xl bg-[#F7F6F2] p-1.5 border border-[#E7E5E0] shrink-0 flex items-center justify-center">
+                      <Package className="w-8 h-8 text-neutral-400" />
+                    </div>
+                  )}
 
                   {/* Info & Controls */}
                   <div className="flex-1 flex flex-col justify-between">

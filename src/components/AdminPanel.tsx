@@ -848,11 +848,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   className="p-4 rounded-xl border border-[#E7E5E0] bg-[#F7F6F2] flex flex-col justify-between"
                 >
                   <div className="flex gap-3">
-                    <img
-                      src={prod.mainImage}
-                      alt={prod.name}
-                      className="w-16 h-16 rounded-lg object-contain bg-white p-1 border border-neutral-200 shrink-0"
-                    />
+                    {prod.mainImage && prod.mainImage.trim() ? (
+                      <img
+                        src={prod.mainImage}
+                        alt={prod.name}
+                        className="w-16 h-16 rounded-lg object-contain bg-white p-1 border border-neutral-200 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-lg bg-white p-1 border border-neutral-200 shrink-0 flex items-center justify-center">
+                        <Package className="w-6 h-6 text-neutral-400" />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-1">
                         <span className="text-[10px] font-bold text-neutral-400 uppercase">{prod.category}</span>
@@ -1662,7 +1668,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <label className="block font-bold">Image Gallery List</label>
                   {editingProduct.images.map((img, idx) => (
                     <div key={idx} className="flex items-center gap-2">
-                      <img src={img} alt="" className="w-8 h-8 rounded object-contain bg-neutral-100 border" />
+                      {img && img.trim() ? (
+                        <img src={img} alt="" className="w-8 h-8 rounded object-contain bg-neutral-100 border shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded bg-neutral-100 border shrink-0 flex items-center justify-center text-xs text-neutral-400">🖼️</div>
+                      )}
                       <input
                         type="text"
                         value={img}

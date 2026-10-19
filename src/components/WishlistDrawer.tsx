@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Heart, ShoppingBag, Trash2, ArrowRight } from 'lucide-react';
+import { X, Heart, ShoppingBag, Trash2, ArrowRight, Package } from 'lucide-react';
 import { Product } from '../types';
 import { formatCurrency } from '../utils/formatters';
 
@@ -68,15 +68,27 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
           ) : (
             wishlist.map((prod) => (
               <div key={prod.id} className="py-4 first:pt-0 last:pb-0 flex gap-4">
-                <img
-                  src={prod.mainImage}
-                  alt={prod.name}
-                  onClick={() => {
-                    onOpenProduct(prod);
-                    onClose();
-                  }}
-                  className="w-20 h-20 rounded-xl object-contain bg-[#F7F6F2] p-1.5 border border-[#E7E5E0] cursor-pointer shrink-0"
-                />
+                {prod.mainImage && prod.mainImage.trim() ? (
+                  <img
+                    src={prod.mainImage}
+                    alt={prod.name}
+                    onClick={() => {
+                      onOpenProduct(prod);
+                      onClose();
+                    }}
+                    className="w-20 h-20 rounded-xl object-contain bg-[#F7F6F2] p-1.5 border border-[#E7E5E0] cursor-pointer shrink-0"
+                  />
+                ) : (
+                  <div 
+                    onClick={() => {
+                      onOpenProduct(prod);
+                      onClose();
+                    }}
+                    className="w-20 h-20 rounded-xl bg-[#F7F6F2] p-1.5 border border-[#E7E5E0] cursor-pointer shrink-0 flex items-center justify-center"
+                  >
+                    <Package className="w-8 h-8 text-neutral-400" />
+                  </div>
+                )}
 
                 <div className="flex-1 flex flex-col justify-between">
                   <div>

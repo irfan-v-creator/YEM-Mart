@@ -376,7 +376,7 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
                                 className="w-12 h-12 rounded-xl bg-neutral-100 border border-neutral-200 shrink-0 p-1 flex items-center justify-center relative overflow-hidden"
                                 title={`${item.productName} (Qty: ${item.quantity})`}
                               >
-                                {item.image ? (
+                                {item.image && item.image.trim() ? (
                                   <img
                                     src={item.image}
                                     alt={item.productName}
