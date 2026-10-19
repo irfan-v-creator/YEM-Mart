@@ -1,4 +1,4 @@
-import { Product, StoreSettings, HeroBanner, Order, Coupon, AuditLog, StockAdjustmentLog } from '../types';
+import type { Product, StoreSettings, HeroBanner, Order, Coupon, AuditLog, StockAdjustmentLog } from '../types/index.js';
 
 export const INITIAL_SETTINGS: StoreSettings = {
   storeName: "YEM MART",

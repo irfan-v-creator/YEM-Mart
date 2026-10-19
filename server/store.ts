@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { 
+import type { 
   Product, 
   Order, 
   StoreSettings, 
@@ -12,7 +12,7 @@ import {
   CustomerDetails,
   OrderStatus,
   PaymentStatus
-} from '../src/types/index';
+} from '../src/types/index.js';
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_SETTINGS, 
@@ -20,7 +20,7 @@ import {
   INITIAL_COUPONS, 
   INITIAL_AUDIT_LOGS, 
   INITIAL_STOCK_LOGS 
-} from '../src/data/initialData';
+} from '../src/data/initialData.js';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase.js';
 
 const __filename = fileURLToPath(import.meta.url);

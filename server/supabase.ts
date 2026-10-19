@@ -23,3 +23,17 @@ export const getSupabaseClient = (): SupabaseClient | null => {
   }
   return supabaseInstance;
 };
+
+// Safe proxy export for `import { supabase } from './lib/supabase.js'` or `'./server/supabase.js'`
+export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop) {
+    const client = getSupabaseClient();
+    if (!client) {
+      return undefined;
+    }
+    const val = (client as any)[prop];
+    return typeof val === 'function' ? val.bind(client) : val;
+  },
+});
+
+export default getSupabaseClient;

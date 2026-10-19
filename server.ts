@@ -5,9 +5,9 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { store } from './server/store';
-import { isSupabaseConfigured, getSupabaseClient } from './server/supabase';
-import { Product } from './src/types';
+import { store } from './server/store.js';
+import { isSupabaseConfigured, getSupabaseClient } from './server/supabase.js';
+import type { Product } from './src/types/index.js';
 
 dotenv.config();
 
@@ -984,6 +984,48 @@ Your personality and guidelines:
   }
 });
 
+// --- SAFE GLOBAL ERROR HANDLING MIDDLEWARE ---
+// Explicitly handles synchronous exceptions, JSON parser errors, or next(err) with proper CORS headers
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Ensure CORS headers are attached on all error responses
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-actor, x-admin-token, Accept');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  const statusCode = 
+    typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 600
+      ? err.statusCode
+      : typeof err.status === 'number' && err.status >= 400 && err.status < 600
+        ? err.status
+        : 500;
+
+  // Safe extraction of clean string message to prevent raw [object Object] output
+  let errorMessage = 'An unexpected server error occurred.';
+  if (typeof err === 'string' && err.trim() && err.trim() !== '[object Object]') {
+    errorMessage = err.trim();
+  } else if (err && typeof err.message === 'string' && err.message.trim() && err.message.trim() !== '[object Object]') {
+    errorMessage = err.message.trim();
+  } else if (err && typeof err.error === 'string' && err.error.trim() && err.error.trim() !== '[object Object]') {
+    errorMessage = err.error.trim();
+  } else if (err && typeof err.error?.message === 'string' && err.error.message.trim()) {
+    errorMessage = err.error.message.trim();
+  }
+
+  console.error(`[Server Error] ${req.method} ${req.url} - Status ${statusCode}:`, err?.message || err);
+
+  if (res.headersSent) {
+    return _next(err);
+  }
+
+  return res.status(statusCode).json({ error: errorMessage });
+});
+
 // Start server and configure Vite middlewares in development
 async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
@@ -1013,7 +1055,14 @@ async function startServer() {
 }
 
 // In local or Cloud Run environments, start the listener. In Vercel serverless functions, export app.
-if (!process.env.VERCEL) {
+const isDirectCliRun = Boolean(
+  process.argv[1] && (
+    process.argv[1].endsWith('server.ts') || 
+    process.argv[1].endsWith('server.js')
+  )
+);
+
+if (!process.env.VERCEL && isDirectCliRun) {
   startServer();
 }
 
