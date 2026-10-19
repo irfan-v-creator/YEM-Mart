@@ -31,6 +31,7 @@ import {
   downloadOrderReceiptText, 
   formatWhatsAppUrl 
 } from '../utils/formatters';
+import { generateOrderPdfInvoice } from '../utils/pdfInvoice';
 import { api } from '../utils/api';
 
 interface MyOrdersModalProps {
@@ -59,6 +60,7 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedReceiptId, setCopiedReceiptId] = useState<string | null>(null);
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
   const [cancelModalOrder, setCancelModalOrder] = useState<Order | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
@@ -119,6 +121,18 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
   const handleDownloadReceipt = (order: Order, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     downloadOrderReceiptText(order, whatsappNumber);
+  };
+
+  const handleDownloadPdf = (order: Order, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      setDownloadingPdfId(order.id);
+      generateOrderPdfInvoice(order, whatsappNumber);
+    } catch (err) {
+      console.error('Failed to generate PDF invoice:', err);
+    } finally {
+      setTimeout(() => setDownloadingPdfId(null), 1200);
+    }
   };
 
   const handleCopyReceiptText = (order: Order, e?: React.MouseEvent) => {
@@ -419,6 +433,17 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
 
                             <button
                               type="button"
+                              onClick={(e) => handleDownloadPdf(order, e)}
+                              disabled={downloadingPdfId === order.id}
+                              className="px-3.5 py-1.5 rounded-xl bg-[#171717] hover:bg-[#C9A44C] hover:text-[#171717] active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs cursor-pointer disabled:opacity-60"
+                              title="Download official corporate A4 PDF Tax Invoice with itemized breakdown"
+                            >
+                              <FileText className="w-3.5 h-3.5 shrink-0 text-[#C9A44C]" />
+                              <span>{downloadingPdfId === order.id ? 'Generating PDF...' : '📥 Download PDF Invoice'}</span>
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={(e) => handleCopyReceiptText(order, e)}
                               className="px-3 py-1.5 rounded-xl bg-white hover:bg-neutral-100 active:scale-95 text-[#171717] font-semibold text-xs flex items-center gap-1.5 transition-all border border-neutral-300 hover:border-neutral-400 cursor-pointer"
                               title="Copy structured receipt text"
@@ -434,16 +459,6 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
                                   <span>📋 Copy Text</span>
                                 </>
                               )}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={(e) => handleDownloadReceipt(order, e)}
-                              className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-neutral-100 active:scale-95 text-neutral-600 font-medium text-xs flex items-center gap-1 transition-all border border-neutral-200 cursor-pointer"
-                              title="Download text receipt"
-                            >
-                              <Download className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
-                              <span>Download</span>
                             </button>
                           </div>
 
@@ -551,12 +566,23 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
 
                                 <button
                                   type="button"
+                                  onClick={(e) => handleDownloadPdf(order, e)}
+                                  disabled={downloadingPdfId === order.id}
+                                  className="px-3.5 py-2 rounded-xl bg-[#171717] hover:bg-[#C9A44C] hover:text-[#171717] active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-60"
+                                  title="Download official corporate A4 PDF Tax Invoice with itemized breakdown"
+                                >
+                                  <FileText className="w-3.5 h-3.5 shrink-0 text-[#C9A44C]" />
+                                  <span>{downloadingPdfId === order.id ? 'Generating PDF...' : '📥 Download PDF Invoice'}</span>
+                                </button>
+
+                                <button
+                                  type="button"
                                   onClick={(e) => handleDownloadReceipt(order, e)}
                                   className="px-3 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 active:scale-95 text-[#171717] font-semibold text-xs flex items-center gap-1.5 transition-all border border-neutral-200 cursor-pointer"
                                   title="Download clean text receipt file (.txt)"
                                 >
                                   <Download className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
-                                  <span>Download Receipt</span>
+                                  <span>Download Text</span>
                                 </button>
                               </div>
                             </div>
@@ -756,12 +782,23 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
 
                       <button
                         type="button"
+                        onClick={(e) => handleDownloadPdf(lookupResult, e)}
+                        disabled={downloadingPdfId === lookupResult.id}
+                        className="px-3.5 py-2 rounded-xl bg-[#171717] hover:bg-[#C9A44C] hover:text-[#171717] active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-60"
+                        title="Download official corporate A4 PDF Tax Invoice with itemized breakdown"
+                      >
+                        <FileText className="w-3.5 h-3.5 shrink-0 text-[#C9A44C]" />
+                        <span>{downloadingPdfId === lookupResult.id ? 'Generating PDF...' : '📥 Download PDF Invoice'}</span>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={(e) => handleDownloadReceipt(lookupResult, e)}
                         className="px-3 py-2 rounded-xl bg-white hover:bg-neutral-100 active:scale-95 text-neutral-700 font-semibold text-xs flex items-center gap-1.5 transition-all border border-neutral-300 cursor-pointer"
-                        title="Download text receipt file"
+                        title="Download text receipt file (.txt)"
                       >
                         <Download className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
-                        <span>Download Receipt</span>
+                        <span>Download Text</span>
                       </button>
                     </div>
                   </div>
