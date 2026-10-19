@@ -77,6 +77,74 @@ function getAdminHeaders(): Record<string, string> {
   return headers;
 }
 
+export function extractErrorMessage(err: any, fallback = 'Invalid admin passkey or unauthorized role.'): string {
+  if (!err) return fallback;
+
+  // 1. Direct string
+  if (typeof err === 'string') {
+    const trimmed = err.trim();
+    if (trimmed && trimmed !== '[object Object]' && trimmed !== 'null' && trimmed !== 'undefined') {
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return extractErrorMessage(parsed, fallback);
+        } catch {}
+      }
+      return trimmed;
+    }
+    return fallback;
+  }
+
+  // 2. Axios-style err.response?.data
+  if (err.response?.data) {
+    const d = err.response.data;
+    if (typeof d === 'string') return extractErrorMessage(d, fallback);
+    if (typeof d === 'object') {
+      if (typeof d.error === 'string') return extractErrorMessage(d.error, fallback);
+      if (typeof d.message === 'string') return extractErrorMessage(d.message, fallback);
+      if (d.error && typeof d.error === 'object') return extractErrorMessage(d.error, fallback);
+    }
+  }
+
+  // 3. Generic object err.data
+  if (err.data) {
+    const d = err.data;
+    if (typeof d === 'string') return extractErrorMessage(d, fallback);
+    if (typeof d === 'object') {
+      if (typeof d.error === 'string') return extractErrorMessage(d.error, fallback);
+      if (typeof d.message === 'string') return extractErrorMessage(d.message, fallback);
+      if (d.error && typeof d.error === 'object') return extractErrorMessage(d.error, fallback);
+    }
+  }
+
+  // 4. err.error
+  if (err.error) {
+    if (typeof err.error === 'string') return extractErrorMessage(err.error, fallback);
+    if (typeof err.error === 'object') return extractErrorMessage(err.error, fallback);
+  }
+
+  // 5. err.message
+  if (typeof err.message === 'string') {
+    const msg = err.message.trim();
+    if (msg && msg !== '[object Object]' && msg !== 'null' && msg !== 'undefined') {
+      if (msg.startsWith('{') && msg.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(msg);
+          return extractErrorMessage(parsed, fallback);
+        } catch {}
+      }
+      return msg;
+    }
+  }
+
+  // 6. err.statusText
+  if (typeof err.statusText === 'string' && err.statusText) {
+    return `Server error: ${err.statusText}`;
+  }
+
+  return fallback;
+}
+
 function notifyStoreUpdated(entity = 'store'): void {
   if (typeof window !== 'undefined') {
     try {
@@ -111,10 +179,33 @@ export const api = {
       }
 
       // If server returned non-200 with an error JSON, extract it
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to authenticate admin');
+      let errPayload: any = null;
+      try {
+        errPayload = await res.json();
+      } catch {
+        try {
+          const text = await res.text();
+          if (text) errPayload = { error: text };
+        } catch {}
+      }
+
+      const defaultMsg = res.status === 401
+        ? 'Invalid admin passkey or unauthorized role. Please check your credentials.'
+        : res.status === 429
+          ? 'Too many login attempts. Please wait a moment and try again.'
+          : `Authentication failed (Status ${res.status}).`;
+
+      const cleanMessage = extractErrorMessage(errPayload, defaultMsg);
+      throw new Error(cleanMessage);
     } catch (networkErr: any) {
-      throw networkErr;
+      if (networkErr instanceof Error && networkErr.message && networkErr.message !== '[object Object]') {
+        throw networkErr;
+      }
+      const msg = extractErrorMessage(
+        networkErr,
+        'Authentication failed. Please verify your admin passkey and network connection.'
+      );
+      throw new Error(msg);
     }
   },
 

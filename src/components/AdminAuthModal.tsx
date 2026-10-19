@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Lock, ShieldCheck, X, AlertCircle, ArrowRight, KeyRound, UserCheck } from 'lucide-react';
-import { api } from '../utils/api';
+import { api, extractErrorMessage } from '../utils/api';
 
-interface AdminAuthModalProps {
+export interface AdminAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (role: string) => void;
@@ -35,7 +35,11 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
       setPassword('');
       onSuccess(res.role);
     } catch (err: any) {
-      setError(err.message || 'Authentication failed. Please check your admin passkey.');
+      const cleanMessage = extractErrorMessage(
+        err,
+        'Invalid admin passkey or unauthorized role. Please check your credentials.'
+      );
+      setError(cleanMessage);
     } finally {
       setIsLoading(false);
     }
@@ -137,3 +141,6 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
     </div>
   );
 };
+
+export const AdminLoginModal = AdminAuthModal;
+export default AdminAuthModal;
