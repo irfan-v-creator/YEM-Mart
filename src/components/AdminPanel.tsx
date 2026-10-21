@@ -22,6 +22,7 @@ import {
   RotateCcw,
   Eye,
   ArrowRight,
+  ChevronLeft,
   ChevronRight,
   Filter,
   Download,
@@ -49,6 +50,7 @@ import {
   ProductPublicationStatus
 } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
+import { api } from '../utils/api';
 
 interface AdminPanelProps {
   products: Product[];
@@ -103,6 +105,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Selected Order for detail modal
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
+  // Orders pagination & on-demand detailed order loading
+  const [orderPage, setOrderPage] = useState<number>(1);
+  const [orderPageSize, setOrderPageSize] = useState<number>(10);
+  const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null);
+
   // Product editor state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
@@ -151,6 +158,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       (o.utrNumber && o.utrNumber.includes(orderSearchQuery));
     return matchesStatus && matchesSearch;
   });
+
+  const totalOrderPages = Math.max(1, Math.ceil(filteredOrders.length / orderPageSize));
+  const paginatedOrders = filteredOrders.slice((orderPage - 1) * orderPageSize, orderPage * orderPageSize);
+
+  const handleOpenOrderDetails = async (ord: Order) => {
+    // If order items don't have detailed names/prices, load full order on demand
+    if (!ord.items || ord.items.length === 0 || !(ord.items[0] as any).productName) {
+      setLoadingDetailsId(ord.id);
+      try {
+        const fullOrder = await api.getOrderById(ord.id);
+        setSelectedOrder(fullOrder);
+      } catch (err) {
+        console.error('Failed to load full order details:', err);
+        setSelectedOrder(ord);
+      } finally {
+        setLoadingDetailsId(null);
+      }
+    } else {
+      setSelectedOrder(ord);
+    }
+  };
 
   const handleSaveSettings = () => {
     if (!canManageSettings) {
@@ -548,7 +576,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </button>
                         )}
                         <button
-                          onClick={() => setSelectedOrder(ord)}
+                          onClick={() => handleOpenOrderDetails(ord)}
                           className="px-3 py-1.5 rounded-lg bg-neutral-100 text-neutral-700 text-xs font-medium hover:bg-neutral-200"
                         >
                           View Details
@@ -584,7 +612,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <span>{ord.customer.fullName}</span>
                       </div>
                       <span className="text-[11px] text-neutral-400">
-                        {formatDate(ord.createdAt)} • {ord.items.length} items
+                        {formatDate(ord.createdAt)} • {(ord as any).itemsSummary || `${ord.items?.length || 0} items`}
                       </span>
                     </div>
 
@@ -604,7 +632,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         {ord.status.toUpperCase()}
                       </span>
                       <button
-                        onClick={() => setSelectedOrder(ord)}
+                        onClick={() => handleOpenOrderDetails(ord)}
                         className="p-1 rounded text-neutral-400 hover:text-black"
                       >
                         <Eye className="w-4 h-4" />
@@ -644,7 +672,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <input
                     type="text"
                     value={orderSearchQuery}
-                    onChange={(e) => setOrderSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setOrderSearchQuery(e.target.value);
+                      setOrderPage(1);
+                    }}
                     placeholder="Search Order ID, Phone, UTR..."
                     className="pl-8 pr-3 py-1.5 rounded-xl border border-[#E7E5E0] text-xs outline-none focus:border-[#C9A44C]"
                   />
@@ -652,7 +683,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                 <select
                   value={orderStatusFilter}
-                  onChange={(e) => setOrderStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    setOrderStatusFilter(e.target.value);
+                    setOrderPage(1);
+                  }}
                   className="px-3 py-1.5 rounded-xl border border-[#E7E5E0] text-xs outline-none bg-white font-medium"
                 >
                   <option value="all">All Statuses</option>
@@ -682,14 +716,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E7E5E0]">
-                  {filteredOrders.length === 0 ? (
+                  {paginatedOrders.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="p-8 text-center text-neutral-400">
-                        No orders matching the selected filter.
+                        <div className="max-w-xs mx-auto space-y-2">
+                          <p className="font-semibold text-neutral-600">No orders found</p>
+                          <p className="text-xs text-neutral-400">
+                            {orderSearchQuery || orderStatusFilter !== 'all' 
+                              ? 'Try adjusting your search keywords or filter criteria.' 
+                              : 'No genuine customer orders have been placed yet.'}
+                          </p>
+                          {(orderSearchQuery || orderStatusFilter !== 'all') && (
+                            <button
+                              onClick={() => {
+                                setOrderSearchQuery('');
+                                setOrderStatusFilter('all');
+                                setOrderPage(1);
+                              }}
+                              className="text-xs text-[#C9A44C] font-bold hover:underline pt-1 inline-block"
+                            >
+                              Reset filters
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ) : (
-                    filteredOrders.map((ord) => (
+                    paginatedOrders.map((ord) => (
                       <tr key={ord.id} className="hover:bg-neutral-50/50 transition-colors">
                         <td className="p-3">
                           <p className="font-extrabold text-[#171717]">{ord.id}</p>
@@ -706,7 +759,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                         <td className="p-3">
                           <p className="font-bold text-[#171717]">{formatCurrency(ord.grandTotal)}</p>
-                          <p className="text-[11px] text-neutral-500">{ord.items.length} items</p>
+                          <p className="text-[11px] text-neutral-500">
+                            {(ord as any).itemsSummary || `${ord.items?.length || 0} items`}
+                          </p>
                         </td>
 
                         <td className="p-3">
@@ -757,11 +812,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               </button>
                             )}
                             <button
-                              onClick={() => setSelectedOrder(ord)}
-                              className="p-1.5 rounded text-neutral-500 hover:text-black hover:bg-neutral-100"
+                              onClick={() => handleOpenOrderDetails(ord)}
+                              disabled={loadingDetailsId === ord.id}
+                              className="p-1.5 rounded text-neutral-500 hover:text-black hover:bg-neutral-100 disabled:opacity-50"
                               title="Full Order Details"
                             >
-                              <Eye className="w-4 h-4" />
+                              {loadingDetailsId === ord.id ? (
+                                <Clock className="w-4 h-4 animate-spin text-[#C9A44C]" />
+                              ) : (
+                                <Eye className="w-4 h-4" />
+                              )}
                             </button>
                           </div>
                         </td>
@@ -771,6 +831,57 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination Controls */}
+            {filteredOrders.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-[#E7E5E0] text-xs text-neutral-600">
+                <div className="flex items-center gap-3">
+                  <span>
+                    Showing <strong>{(orderPage - 1) * orderPageSize + 1}</strong> to{' '}
+                    <strong>{Math.min(orderPage * orderPageSize, filteredOrders.length)}</strong> of{' '}
+                    <strong>{filteredOrders.length}</strong> orders
+                  </span>
+                  <span className="text-neutral-300">|</span>
+                  <div className="flex items-center gap-1.5">
+                    <span>Rows per page:</span>
+                    <select
+                      value={orderPageSize}
+                      onChange={(e) => {
+                        setOrderPageSize(Number(e.target.value));
+                        setOrderPage(1);
+                      }}
+                      className="px-2 py-1 rounded-lg border border-[#E7E5E0] bg-white font-medium outline-none cursor-pointer"
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setOrderPage((p) => Math.max(1, p - 1))}
+                    disabled={orderPage <= 1}
+                    className="px-3 py-1.5 rounded-xl border border-[#E7E5E0] bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-neutral-50 flex items-center gap-1 transition-colors"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Previous</span>
+                  </button>
+                  <span className="px-2 font-bold text-neutral-700">
+                    Page {orderPage} of {totalOrderPages}
+                  </span>
+                  <button
+                    onClick={() => setOrderPage((p) => Math.min(totalOrderPages, p + 1))}
+                    disabled={orderPage >= totalOrderPages}
+                    className="px-3 py-1.5 rounded-xl border border-[#E7E5E0] bg-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-neutral-50 flex items-center gap-1 transition-colors"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -66,7 +66,6 @@ import {
   INITIAL_PRODUCTS, 
   INITIAL_SETTINGS, 
   INITIAL_BANNERS, 
-  INITIAL_ORDERS,
   INITIAL_COUPONS,
   INITIAL_AUDIT_LOGS,
   INITIAL_STOCK_LOGS
@@ -108,6 +107,7 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [stockLogs, setStockLogs] = useState<StockAdjustmentLog[]>([]);
+  const adminDataPromiseRef = useRef<Promise<void> | null>(null);
 
   const parseRouteFromLocation = useCallback(() => {
     if (typeof window === 'undefined') return { type: 'home' as const };
@@ -703,7 +703,7 @@ export default function App() {
     try {
       await api.updateOrderStatus(orderId, status, note, 'Admin');
       const updatedOrders = await api.getOrders();
-      setOrders(updatedOrders);
+      setOrders(Array.isArray(updatedOrders) ? updatedOrders : (updatedOrders?.orders || []));
       if (status === 'cancelled') {
         refreshStoreData(true);
       }
@@ -718,7 +718,7 @@ export default function App() {
     try {
       await api.verifyPayment(orderId, 'Admin');
       const updatedOrders = await api.getOrders();
-      setOrders(updatedOrders);
+      setOrders(Array.isArray(updatedOrders) ? updatedOrders : (updatedOrders?.orders || []));
       api.getAuditLogs().then(setAuditLogs).catch(() => {});
       showToast(`Verified UPI Payment for Order #${orderId}`);
     } catch (err: any) {
@@ -789,25 +789,37 @@ export default function App() {
     }
   };
 
-  // Synchronize protected admin datasets once authenticated
-  const loadAdminData = async () => {
-    try {
-      const [ordList, cpnList, audList, stkList, prodList] = await Promise.all([
-        api.getOrders(),
-        api.getCoupons(),
-        api.getAuditLogs(),
-        api.getStockLogs(),
-        api.getProducts({ fresh: true }),
-      ]);
-      setOrders(ordList);
-      setCoupons(cpnList);
-      setAuditLogs(audList);
-      setStockLogs(stkList);
-      setProducts(prodList);
-    } catch (err: any) {
-      console.error('Failed to load admin datasets:', err);
+  // Synchronize protected admin datasets once authenticated (deduplicated)
+  const loadAdminData = useCallback(async (force = false) => {
+    if (!force && adminDataPromiseRef.current) {
+      return adminDataPromiseRef.current;
     }
-  };
+
+    const fetchPromise = (async () => {
+      try {
+        const [ordRes, cpnList, audList, stkList, prodList] = await Promise.all([
+          api.getOrders(),
+          api.getCoupons(),
+          api.getAuditLogs(),
+          api.getStockLogs(),
+          api.getProducts({ fresh: true }),
+        ]);
+        const ordersArray = Array.isArray(ordRes) ? ordRes : (ordRes?.orders || []);
+        setOrders(ordersArray);
+        setCoupons(cpnList);
+        setAuditLogs(audList);
+        setStockLogs(stkList);
+        setProducts(prodList);
+      } catch (err: any) {
+        console.error('Failed to load admin datasets:', err);
+      } finally {
+        adminDataPromiseRef.current = null;
+      }
+    })();
+
+    adminDataPromiseRef.current = fetchPromise;
+    return fetchPromise;
+  }, []);
 
   const handleCloseAdmin = () => {
     setIsAdminOpen(false);

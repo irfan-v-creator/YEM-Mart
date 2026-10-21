@@ -322,10 +322,13 @@ export const api = {
   },
 
   // Orders
-  async getOrders(params?: { status?: string; search?: string }): Promise<Order[]> {
+  async getOrders(params?: { status?: string; search?: string; page?: number; limit?: number; summary?: boolean }): Promise<any> {
     const q = new URLSearchParams();
     if (params?.status) q.set('status', params.status);
     if (params?.search) q.set('search', params.search);
+    if (params?.page) q.set('page', String(params.page));
+    if (params?.limit) q.set('limit', String(params.limit));
+    if (params?.summary !== undefined) q.set('summary', String(params.summary));
 
     const res = await fetch(`/api/orders?${q.toString()}`, {
       headers: getAdminHeaders(),
@@ -333,6 +336,17 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to fetch orders (Admin authorization required)');
+    }
+    return res.json();
+  },
+
+  async getOrderById(orderId: string): Promise<Order> {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+      headers: getAdminHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Order #${orderId} not found`);
     }
     return res.json();
   },

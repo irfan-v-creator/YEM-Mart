@@ -78,7 +78,7 @@ class Store {
         const parsed = JSON.parse(raw);
         return {
           products: Array.isArray(parsed.products) && parsed.products.length > 0 ? parsed.products : INITIAL_PRODUCTS,
-          orders: Array.isArray(parsed.orders) ? parsed.orders : INITIAL_ORDERS,
+          orders: Array.isArray(parsed.orders) ? parsed.orders : [],
           settings: parsed.settings && parsed.settings.storeName ? parsed.settings : INITIAL_SETTINGS,
           coupons: Array.isArray(parsed.coupons) ? parsed.coupons : INITIAL_COUPONS,
           auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : INITIAL_AUDIT_LOGS,
@@ -91,7 +91,7 @@ class Store {
 
     const defaultData: DatabaseSchema = {
       products: INITIAL_PRODUCTS,
-      orders: INITIAL_ORDERS,
+      orders: [],
       settings: INITIAL_SETTINGS,
       coupons: INITIAL_COUPONS,
       auditLogs: INITIAL_AUDIT_LOGS,
@@ -729,20 +729,88 @@ class Store {
   }
 
   // --- ORDERS ---
-  public getOrders(filter?: { status?: string; search?: string }): Order[] {
+  private toOrderSummary(o: Order) {
+    const totalUnits = Array.isArray(o.items)
+      ? o.items.reduce((sum, it) => sum + (it.quantity || 1), 0)
+      : 0;
+    const preview = Array.isArray(o.items) && o.items.length > 0
+      ? o.items.slice(0, 2).map(it => `${it.productName}${it.quantity > 1 ? ` (×${it.quantity})` : ''}`).join(', ') + (o.items.length > 2 ? ` +${o.items.length - 2} more` : '')
+      : 'Items logged';
+
+    return {
+      id: o.id,
+      createdAt: o.createdAt,
+      customer: {
+        fullName: o.customer?.fullName || 'Customer',
+        phone: o.customer?.phone || '',
+        district: o.customer?.district || 'Kerala',
+        pincode: o.customer?.pincode || '',
+      },
+      itemsCount: totalUnits,
+      itemsSummary: preview,
+      subtotal: o.subtotal,
+      deliveryFee: o.deliveryFee,
+      discountAmount: o.discountAmount,
+      grandTotal: o.grandTotal,
+      status: o.status,
+      paymentStatus: o.paymentStatus,
+      utrNumber: o.utrNumber,
+      paymentSubmittedAt: o.paymentSubmittedAt,
+      cancellationReason: o.cancellationReason,
+    };
+  }
+
+  public getOrders(options?: {
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+    summary?: boolean;
+  }): any {
     let list = [...this.data.orders];
-    if (filter?.status && filter.status !== 'all') {
-      list = list.filter(o => o.status === filter.status || o.paymentStatus === filter.status);
+
+    // Status filter
+    if (options?.status && options.status !== 'all') {
+      list = list.filter(o => o.status === options.status || o.paymentStatus === options.status);
     }
-    if (filter?.search) {
-      const q = filter.search.toLowerCase();
+
+    // Search query
+    if (options?.search) {
+      const q = options.search.toLowerCase().trim();
       list = list.filter(o => 
         o.id.toLowerCase().includes(q) ||
-        o.customer.fullName.toLowerCase().includes(q) ||
-        o.customer.phone.includes(q) ||
+        (o.customer?.fullName && o.customer.fullName.toLowerCase().includes(q)) ||
+        (o.customer?.phone && o.customer.phone.includes(q)) ||
         (o.utrNumber && o.utrNumber.includes(q))
       );
     }
+
+    // Sort newest orders first
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    // If pagination requested
+    if (options?.page || options?.limit) {
+      const totalCount = list.length;
+      const page = Math.max(1, Number(options.page) || 1);
+      const limit = Math.max(1, Math.min(100, Number(options.limit) || 25));
+      const totalPages = Math.ceil(totalCount / limit) || 1;
+      const startIndex = (page - 1) * limit;
+      const paginatedSlice = list.slice(startIndex, startIndex + limit);
+
+      return {
+        orders: options.summary ? paginatedSlice.map(o => this.toOrderSummary(o)) : paginatedSlice,
+        totalCount,
+        page,
+        limit,
+        totalPages,
+      };
+    }
+
+    // Default backward compatible array
+    if (options?.summary) {
+      return list.map(o => this.toOrderSummary(o));
+    }
+
     return list;
   }
 

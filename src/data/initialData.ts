@@ -890,162 +890,20 @@ export const INITIAL_PRODUCTS: Product[] = [
   }
 ];
 
-export const INITIAL_ORDERS: Order[] = [
-  {
-    id: "YEM-20261010-4102",
-    createdAt: "2026-10-10T09:30:00.000Z",
-    customer: {
-      fullName: "Rahul Menon",
-      phone: "9847123456",
-      address: "TC 14/204, Nandavanam, Palayam",
-      pincode: "695033",
-      district: "Thiruvananthapuram",
-      landmark: "Near RBI Staff Quarters",
-      orderNotes: "Please deliver after 5 PM if possible"
-    },
-    items: [
-      {
-        productId: "prod-fsh-01",
-        productName: "Pure Linen Casual Mandarin Shirt",
-        variantName: "Size: M (40)",
-        variantSku: "YM-FSH-LIN-M",
-        quantity: 1,
-        unitPrice: 1399,
-        totalPrice: 1399,
-        image: "https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=800&q=80"
-      }
-    ],
-    subtotal: 1399,
-    deliveryFee: 0,
-    grandTotal: 1399,
-    status: "processing",
-    paymentStatus: "verified",
-    utrNumber: "428391048291",
-    paymentSubmittedAt: "2026-10-10T09:35:00.000Z",
-    isRestockedOnCancellation: false,
-    statusTimeline: [
-      { status: "prepared", timestamp: "2026-10-10T09:30:00.000Z", note: "Order created on website" },
-      { status: "payment_submitted", timestamp: "2026-10-10T09:35:00.000Z", note: "Customer submitted UPI UTR: 428391048291" },
-      { status: "confirmed", timestamp: "2026-10-10T09:50:00.000Z", note: "Admin verified UPI payment & confirmed order" },
-      { status: "processing", timestamp: "2026-10-10T10:15:00.000Z", note: "Item packed at Ernakulam fulfillment hub" }
-    ]
-  },
-  {
-    id: "YEM-20261009-8819",
-    createdAt: "2026-10-09T14:15:00.000Z",
-    customer: {
-      fullName: "Aiswarya Nair",
-      phone: "9447890123",
-      address: "Villa 12, Skyline Green Hills, Kadavanthra",
-      pincode: "682020",
-      district: "Ernakulam",
-      landmark: "Opposite Regional Sports Centre"
-    },
-    items: [
-      {
-        productId: "prod-gft-01",
-        productName: "Handcrafted Aranmula Style Brass Nilavilakku (12-inch)",
-        variantName: "12-inch Traditional (1.45kg)",
-        variantSku: "YM-GFT-NIL-12",
-        quantity: 1,
-        unitPrice: 1799,
-        totalPrice: 1799,
-        image: "https://images.unsplash.com/photo-1605647540924-852290f6b0d5?auto=format&fit=crop&w=800&q=80"
-      }
-    ],
-    subtotal: 1799,
-    deliveryFee: 0,
-    grandTotal: 1799,
-    status: "shipped",
-    paymentStatus: "verified",
-    utrNumber: "428210992384",
-    paymentSubmittedAt: "2026-10-09T14:20:00.000Z",
-    isRestockedOnCancellation: false,
-    statusTimeline: [
-      { status: "prepared", timestamp: "2026-10-09T14:15:00.000Z", note: "Order placed on website" },
-      { status: "confirmed", timestamp: "2026-10-09T14:25:00.000Z", note: "Payment verified by Admin" },
-      { status: "shipped", timestamp: "2026-10-09T18:00:00.000Z", note: "Dispatched via Kerala Express Courier. Tracking ID: KEC-891283" }
-    ]
-  },
-  {
-    id: "YEM-20261010-9124",
-    createdAt: "2026-10-10T11:45:00.000Z",
-    customer: {
-      fullName: "Fasila K.P.",
-      phone: "9745678901",
-      address: "House No 54, Beach Road, Calicut",
-      pincode: "673001",
-      district: "Kozhikode",
-      landmark: "Near Lions Park"
-    },
-    items: [
-      {
-        productId: "prod-acc-01",
-        productName: "Full Grain Leather Minimalist Bifold Wallet",
-        variantName: "Vintage Tan Brown",
-        variantSku: "YM-ACC-WAL-TAN",
-        quantity: 1,
-        unitPrice: 749,
-        totalPrice: 749,
-        image: "https://images.unsplash.com/photo-1627123424574-724758594e93?auto=format&fit=crop&w=800&q=80"
-      }
-    ],
-    subtotal: 749,
-    deliveryFee: 49,
-    grandTotal: 798,
-    status: "payment_submitted",
-    paymentStatus: "submitted",
-    utrNumber: "428399120932",
-    paymentSubmittedAt: "2026-10-10T11:50:00.000Z",
-    isRestockedOnCancellation: false,
-    statusTimeline: [
-      { status: "prepared", timestamp: "2026-10-10T11:45:00.000Z", note: "Order created via WhatsApp flow" },
-      { status: "payment_submitted", timestamp: "2026-10-10T11:50:00.000Z", note: "Customer submitted UPI reference. Awaiting admin bank verification." }
-    ]
-  }
-];
+export const INITIAL_ORDERS: Order[] = [];
 
 export const INITIAL_AUDIT_LOGS: AuditLog[] = [
   {
-    id: "log-1",
-    timestamp: "2026-10-10T09:50:00.000Z",
-    action: "PAYMENT_VERIFIED",
-    actor: "Admin (Owner)",
-    details: "Verified UPI transaction UTR 428391048291 for Order YEM-20261010-4102 (₹1,399)",
-    targetId: "YEM-20261010-4102"
-  },
-  {
-    id: "log-2",
-    timestamp: "2026-10-10T10:15:00.000Z",
-    action: "ORDER_STATUS_CHANGE",
-    actor: "Admin (Owner)",
-    details: "Moved Order YEM-20261010-4102 to PROCESSING status",
-    targetId: "YEM-20261010-4102"
-  },
-  {
-    id: "log-3",
+    id: "log-init-1",
     timestamp: "2026-10-10T08:00:00.000Z",
     action: "STORE_SETTINGS_UPDATE",
     actor: "Admin (Owner)",
-    details: "Configured free shipping threshold at ₹999 across Kerala",
+    details: "Configured store settings and Kerala delivery logistics",
     targetId: "settings"
   }
 ];
 
-export const INITIAL_STOCK_LOGS: StockAdjustmentLog[] = [
-  {
-    id: "stk-log-1",
-    timestamp: "2026-10-10T09:30:00.000Z",
-    productId: "prod-fsh-01",
-    productName: "Pure Linen Casual Mandarin Shirt",
-    variantSku: "YM-FSH-LIN-M",
-    previousStock: 8,
-    newStock: 7,
-    difference: -1,
-    reason: "Order YEM-20261010-4102 allocation",
-    actor: "System Order Checkout"
-  }
-];
+export const INITIAL_STOCK_LOGS: StockAdjustmentLog[] = [];
 
 export const ALL_KERALA_DISTRICTS = [
   'Alappuzha',

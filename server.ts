@@ -805,12 +805,15 @@ app.post('/api/cart/validate', rateLimit({ windowMs: 60 * 1000, max: 40 }), (req
 // --- ORDERS API ---
 // Strictly protected: Only authorized store managers can list all orders
 app.get('/api/orders', requireAdminAuth, (req, res) => {
-  const { status, search } = req.query;
-  const list = store.getOrders({
+  const { status, search, page, limit, summary } = req.query;
+  const result = store.getOrders({
     status: typeof status === 'string' ? status : undefined,
     search: typeof search === 'string' ? search : undefined,
+    page: page ? Number(page) : undefined,
+    limit: limit ? Number(limit) : undefined,
+    summary: summary === 'true' || summary === '1',
   });
-  res.json(list);
+  res.json(result);
 });
 
 app.get('/api/orders/:id', requireAdminAuth, (req, res) => {
