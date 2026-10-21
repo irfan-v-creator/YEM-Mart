@@ -7,8 +7,6 @@ import {
   ExternalLink, 
   AlertCircle, 
   ArrowRight, 
-  ShieldCheck, 
-  QrCode, 
   Phone,
   Truck,
   MessageSquare,
@@ -35,7 +33,7 @@ interface CheckoutModalProps {
   couponDiscount?: number;
   onOrderCreated: (order: Order) => void;
   onClearCart: () => void;
-  onOpenTrackingWithId: (orderId: string, phone: string) => void;
+  onOpenTrackingWithId?: (orderId: string, phone: string) => void;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -49,7 +47,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onClearCart,
   onOpenTrackingWithId,
 }) => {
-  const [step, setStep] = useState<'details' | 'whatsapp' | 'payment'>('details');
+  const [step, setStep] = useState<'details' | 'whatsapp'>('details');
 
   // Customer Form State
   const [fullName, setFullName] = useState('');
@@ -74,12 +72,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // Created Order State
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [copiedMessage, setCopiedMessage] = useState(false);
-  const [copiedUpi, setCopiedUpi] = useState(false);
-
-  // UPI Payment Step State
-  const [utrNumber, setUtrNumber] = useState('');
-  const [utrSubmitted, setUtrSubmitted] = useState(false);
-  const [utrSubmitting, setUtrSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -253,48 +245,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     window.open(url, '_blank');
   };
 
-  const handleCopyUpi = () => {
-    navigator.clipboard.writeText(settings.upiId);
-    setCopiedUpi(true);
-    setTimeout(() => setCopiedUpi(false), 2000);
-  };
-
-  const handleSubmitUtr = async () => {
-    if (!utrNumber.trim() || utrNumber.trim().length < 6) {
-      alert('Please enter a valid UPI reference number (UTR)');
-      return;
-    }
-
-    if (!createdOrder) return;
-    setUtrSubmitting(true);
-
-    try {
-      await api.submitUtr(createdOrder.id, utrNumber.trim());
-    } catch (e) {
-      console.warn('Server UTR submit error, saving locally:', e);
-    }
-
-    const updatedOrder: Order = {
-      ...createdOrder,
-      status: 'payment_submitted',
-      paymentStatus: 'submitted',
-      utrNumber: utrNumber.trim(),
-      paymentSubmittedAt: new Date().toISOString(),
-      statusTimeline: [
-        ...createdOrder.statusTimeline,
-        {
-          status: 'payment_submitted',
-          timestamp: new Date().toISOString(),
-          note: `Customer submitted UPI UTR: ${utrNumber.trim()}. Admin verification pending.`,
-        },
-      ],
-    };
-    setCreatedOrder(updatedOrder);
-    onOrderCreated(updatedOrder);
-    setUtrSubmitted(true);
-    setUtrSubmitting(false);
-  };
-
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
       <div className="relative bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-neutral-200 flex flex-col">
@@ -302,9 +252,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-md px-6 py-4 border-b border-[#E7E5E0] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-bold text-[#171717]">
-              {step === 'details' && 'Delivery Information & Order Review'}
-              {step === 'whatsapp' && 'Send WhatsApp Order'}
-              {step === 'payment' && 'Instant UPI Payment Verification'}
+              {step === 'details' ? 'Delivery Information & Order Review' : 'Send WhatsApp Order'}
             </h2>
           </div>
           <button
@@ -315,21 +263,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           </button>
         </div>
 
-        {/* Step Progress Pills */}
+        {/* Step Progress Pills (2 Steps: Details -> WhatsApp Order) */}
         <div className="px-6 py-2.5 bg-[#F7F6F2] border-b border-[#E7E5E0] flex items-center justify-between text-xs font-semibold text-neutral-500">
           <div className={`flex items-center gap-1.5 ${step === 'details' ? 'text-[#C9A44C]' : 'text-neutral-400'}`}>
             <span className="w-5 h-5 rounded-full bg-neutral-200 text-neutral-700 flex items-center justify-center text-[11px] font-bold">1</span>
-            <span>Details</span>
+            <span>Delivery Details</span>
           </div>
           <span className="text-neutral-300">→</span>
           <div className={`flex items-center gap-1.5 ${step === 'whatsapp' ? 'text-[#C9A44C]' : 'text-neutral-400'}`}>
             <span className="w-5 h-5 rounded-full bg-neutral-200 text-neutral-700 flex items-center justify-center text-[11px] font-bold">2</span>
-            <span>WhatsApp Order</span>
-          </div>
-          <span className="text-neutral-300">→</span>
-          <div className={`flex items-center gap-1.5 ${step === 'payment' ? 'text-[#C9A44C]' : 'text-neutral-400'}`}>
-            <span className="w-5 h-5 rounded-full bg-neutral-200 text-neutral-700 flex items-center justify-center text-[11px] font-bold">3</span>
-            <span>UPI Payment</span>
+            <span>WhatsApp Confirmation</span>
           </div>
         </div>
 
@@ -597,118 +540,26 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </button>
             </div>
 
-            {/* Next Step: Proceed to Payment Submission */}
-            <div className="pt-4 border-t border-[#E7E5E0] flex items-center justify-between">
-              <button
-                onClick={() => setStep('payment')}
-                className="w-full py-3 rounded-xl bg-[#171717] text-white font-bold text-xs sm:text-sm hover:bg-[#C9A44C] hover:text-[#171717] transition-all flex items-center justify-center gap-2"
-              >
-                <span>Continue to UPI Payment (Optional / Recommended)</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Instant UPI Payment Submission */}
-        {step === 'payment' && createdOrder && (
-          <div className="p-6 sm:p-8 space-y-6">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex items-center gap-3">
-              <CheckCircle2 className="w-6 h-6 text-emerald-700 shrink-0" />
-              <div>
-                <p className="text-xs font-bold text-emerald-900">
-                  Order ID #{createdOrder.id} Prepared
-                </p>
-                <p className="text-[11px] text-emerald-700">
-                  Total Payable: <strong>{formatCurrency(createdOrder.grandTotal)}</strong>
-                </p>
-              </div>
-            </div>
-
-            {/* UPI QR & ID Box */}
-            <div className="bg-[#F7F6F2] rounded-2xl p-6 border border-[#E7E5E0] flex flex-col items-center text-center">
-              <div className="w-36 h-36 bg-white rounded-xl p-2 border border-neutral-300 shadow-sm flex items-center justify-center relative">
-                <QrCode className="w-28 h-28 text-[#171717]" />
-                <span className="absolute bottom-1 text-[9px] bg-[#171717] text-[#C9A44C] px-1.5 py-0.5 rounded font-bold">
-                  YEM UPI
-                </span>
-              </div>
-              <p className="text-xs font-bold text-[#171717] mt-3">
-                Scan with Google Pay, PhonePe, Paytm, or BHIM
-              </p>
-
-              {/* UPI ID Copy Field */}
-              <div className="mt-3 flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-[#E7E5E0] text-xs">
-                <span className="text-neutral-500">UPI ID:</span>
-                <strong className="text-[#171717]">{settings.upiId}</strong>
-                <button
-                  onClick={handleCopyUpi}
-                  className="p-1 rounded text-neutral-400 hover:text-black transition-colors"
-                  title="Copy UPI ID"
-                >
-                  {copiedUpi ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <p className="text-[11px] text-neutral-400 mt-2">
-                *Official YEM MART payment details pending final merchant tie-up.
-              </p>
-            </div>
-
-            {/* UTR Reference Input */}
-            <div>
-              <label className="block text-xs font-bold text-[#171717] uppercase tracking-wider mb-1">
-                Enter 12-Digit UPI Reference Number (UTR)
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  maxLength={16}
-                  value={utrNumber}
-                  onChange={(e) => setUtrNumber(e.target.value.replace(/[^0-9a-zA-Z]/g, ''))}
-                  placeholder="e.g. 428391048291"
-                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-[#E7E5E0] focus:border-[#C9A44C] outline-none text-sm font-mono"
-                  disabled={utrSubmitted}
-                />
-                <button
-                  onClick={handleSubmitUtr}
-                  disabled={utrSubmitted || !utrNumber.trim()}
-                  className="px-5 py-2.5 rounded-xl bg-[#171717] text-white font-bold text-xs hover:bg-[#C9A44C] hover:text-[#171717] transition-all disabled:opacity-50 shrink-0"
-                >
-                  {utrSubmitted ? 'Submitted!' : 'Submit UTR'}
-                </button>
-              </div>
-
-              {utrSubmitted ? (
-                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-blue-700 shrink-0" />
-                  <span>
-                    Payment record submitted (UTR: <strong>{utrNumber}</strong>). Admin will verify in bank statement and update your status timeline.
-                  </span>
+            {/* Order Confirmation Status & Completion */}
+            <div className="pt-4 border-t border-[#E7E5E0] space-y-3">
+              <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-4 flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-emerald-950">
+                    Order Request #{createdOrder.id} Generated
+                  </p>
+                  <p className="text-emerald-800 leading-relaxed">
+                    Please send your order message on WhatsApp. Our customer support team will verify item availability, confirm delivery, and assist you directly.
+                  </p>
                 </div>
-              ) : (
-                <p className="text-[11px] text-neutral-500 mt-1.5">
-                  Screenshots are not proof of payment alone. The 12-digit UTR is verified against bank records.
-                </p>
-              )}
-            </div>
+              </div>
 
-            {/* Final Done CTA */}
-            <div className="pt-4 border-t border-[#E7E5E0] flex flex-col sm:flex-row gap-3">
               <button
-                onClick={() => {
-                  onClose();
-                  onOpenTrackingWithId(createdOrder.id, createdOrder.customer.phone);
-                }}
-                className="flex-1 py-3 rounded-xl bg-[#C9A44C] text-[#171717] font-extrabold text-sm hover:bg-[#d8b55e] transition-all flex items-center justify-center gap-2 shadow-sm"
-              >
-                <span>Track My Order Timeline</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-              <button
+                type="button"
                 onClick={onClose}
-                className="py-3 px-5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold text-sm transition-colors"
+                className="w-full py-3 rounded-xl bg-[#171717] hover:bg-[#C9A44C] hover:text-[#171717] text-white font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
               >
-                Done
+                <span>Return to Shop</span>
               </button>
             </div>
           </div>

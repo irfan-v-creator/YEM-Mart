@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import type { 
   Product, 
@@ -750,13 +751,39 @@ class Store {
   }
 
   public createOrder(customer: CustomerDetails, items: Array<{ productId: string; variantSku?: string; quantity: number }>, couponCode?: string): { success: boolean; order?: Order; error?: string } {
-    // 1. Server-side validation
+    // 1. Server-side customer input validation
+    if (!customer || typeof customer !== 'object') {
+      return { success: false, error: 'Customer details are required.' };
+    }
+    const fullName = (customer.fullName || '').trim();
+    const phone = (customer.phone || '').replace(/[^0-9]/g, '');
+    const address = (customer.address || '').trim();
+    const pincode = (customer.pincode || '').trim();
+    const district = (customer.district || '').trim();
+
+    if (fullName.length < 2 || fullName.length > 100) {
+      return { success: false, error: 'Please provide a valid customer full name (2-100 characters).' };
+    }
+    if (!/^[6-9]\d{9}$/.test(phone)) {
+      return { success: false, error: 'Please provide a valid 10-digit Indian mobile number starting with 6-9.' };
+    }
+    if (!/^\d{6}$/.test(pincode) || (!pincode.startsWith('67') && !pincode.startsWith('68') && !pincode.startsWith('69'))) {
+      return { success: false, error: 'Please provide a valid 6-digit Kerala PIN code (starting with 67, 68, or 69).' };
+    }
+    if (address.length < 5 || address.length > 300) {
+      return { success: false, error: 'Please provide a complete delivery street address (5-300 characters).' };
+    }
+    if (!district) {
+      return { success: false, error: 'Delivery district is required.' };
+    }
+
+    // 2. Server-side cart validation
     const validation = this.validateCart(items, couponCode);
     if (!validation.isValid) {
       return { success: false, error: validation.errors.join(' ') };
     }
 
-    // 2. Concurrency-safe stock deduction
+    // 3. Concurrency-safe stock deduction
     for (const line of validation.validatedItems) {
       const prod = this.data.products.find(p => p.id === line.product.id);
       if (!prod) continue;
@@ -772,7 +799,7 @@ class Store {
       }
 
       this.data.stockLogs.unshift({
-        id: `stk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        id: `stk-${Date.now()}-${crypto.randomInt(100, 999)}`,
         timestamp: new Date().toISOString(),
         productId: prod.id,
         productName: prod.name,
@@ -781,25 +808,35 @@ class Store {
         newStock: prod.stock,
         difference: -line.quantity,
         reason: 'Customer order allocation',
-        actor: customer.fullName,
+        actor: fullName,
       });
     }
 
-    // 3. Increment coupon usage
+    // 4. Increment coupon usage
     if (validation.coupon) {
       const cpn = this.data.coupons.find(c => c.id === validation.coupon!.id);
       if (cpn) cpn.usedCount += 1;
     }
 
-    // 4. Generate unique Order ID
+    // 5. Generate high-entropy cryptographic Order ID
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const randomSuffix = crypto.randomBytes(3).toString('hex').toUpperCase(); // 16.7M unique keys
     const orderId = `YEM-${dateStr}-${randomSuffix}`;
+
+    const sanitizedCustomer: CustomerDetails = {
+      fullName,
+      phone,
+      address,
+      pincode,
+      district,
+      landmark: customer.landmark ? customer.landmark.trim() : undefined,
+      orderNotes: customer.orderNotes ? customer.orderNotes.trim() : undefined,
+    };
 
     const newOrder: Order = {
       id: orderId,
       createdAt: new Date().toISOString(),
-      customer,
+      customer: sanitizedCustomer,
       items: validation.validatedItems.map(it => ({
         productId: it.product.id,
         productName: it.product.name,
@@ -830,14 +867,38 @@ class Store {
     this.data.orders.unshift(newOrder);
     this.logAudit('ORDER_CREATED', 'Customer', `Order ${orderId} placed (₹${newOrder.grandTotal})`, orderId);
     this.saveDatabaseSync();
-    this.syncOrderToSupabase(newOrder).catch(() => {});
+    this.syncOrderToSupabase(newOrder).catch((err) => {
+      console.error('[Supabase Sync Error] createOrder:', err);
+    });
 
     return { success: true, order: newOrder };
   }
 
-  public updateOrderStatus(orderId: string, status: OrderStatus, note?: string, actor = 'Admin'): boolean {
+  public updateOrderStatus(orderId: string, status: OrderStatus, note?: string, actor = 'Admin'): { success: boolean; error?: string } {
+    const validStatuses: OrderStatus[] = [
+      'prepared',
+      'whatsapp_pending',
+      'payment_submitted',
+      'confirmed',
+      'processing',
+      'shipped',
+      'delivered',
+      'cancelled',
+    ];
+    if (!validStatuses.includes(status)) {
+      return { success: false, error: `Invalid order status: ${status}` };
+    }
+
     const order = this.data.orders.find(o => o.id === orderId);
-    if (!order) return false;
+    if (!order) return { success: false, error: 'Order not found' };
+
+    // Disallow reopening delivered or cancelled orders
+    if (order.status === 'delivered' && status !== 'delivered') {
+      return { success: false, error: 'Delivered orders cannot transition back to an earlier status.' };
+    }
+    if (order.status === 'cancelled' && status !== 'cancelled') {
+      return { success: false, error: 'Cancelled orders cannot be reopened.' };
+    }
 
     // Concurrency safe & IDEMPOTENT RESTOCKING ON CANCELLATION
     if (status === 'cancelled' && !order.isRestockedOnCancellation) {
@@ -854,7 +915,7 @@ class Store {
         }
 
         const stockLog: StockAdjustmentLog = {
-          id: `stk-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          id: `stk-${Date.now()}-${crypto.randomInt(100, 999)}`,
           timestamp: new Date().toISOString(),
           productId: prod.id,
           productName: prod.name,
@@ -866,8 +927,12 @@ class Store {
           actor,
         };
         this.data.stockLogs.unshift(stockLog);
-        this.syncStockLogToSupabase(stockLog).catch(() => {});
-        this.syncProductToSupabase(prod).catch(() => {});
+        this.syncStockLogToSupabase(stockLog).catch((err) => {
+          console.error('[Supabase Sync Error] restockLog:', err);
+        });
+        this.syncProductToSupabase(prod).catch((err) => {
+          console.error('[Supabase Sync Error] restockProduct:', err);
+        });
       }
       order.isRestockedOnCancellation = true;
       order.cancelledAt = new Date().toISOString();
@@ -883,81 +948,116 @@ class Store {
 
     this.logAudit('ORDER_STATUS_UPDATE', actor, `Order ${orderId} status set to ${status}`, orderId);
     this.saveDatabaseSync();
-    this.syncOrderStatusToSupabase(orderId, status, note, actor).catch(() => {});
-    return true;
+    this.syncOrderStatusToSupabase(orderId, status, note, actor).catch((err) => {
+      console.error('[Supabase Sync Error] updateOrderStatus:', err);
+    });
+    return { success: true };
   }
 
-  public verifyPayment(orderId: string, actor = 'Admin'): boolean {
+  public verifyPayment(orderId: string, actor = 'Admin'): { success: boolean; error?: string } {
     const order = this.data.orders.find(o => o.id === orderId);
-    if (!order) return false;
+    if (!order) return { success: false, error: 'Order not found' };
+
+    if (order.status === 'cancelled') {
+      return { success: false, error: 'Cannot verify payment for a cancelled order.' };
+    }
+    if (order.status === 'delivered') {
+      return { success: false, error: 'Order is already marked as delivered.' };
+    }
+    if (order.paymentStatus === 'verified' && order.status === 'confirmed') {
+      return { success: true }; // Idempotent
+    }
+    if (!order.utrNumber && order.paymentMethod !== 'cod') {
+      return { success: false, error: 'Cannot verify payment: No customer UTR number has been submitted yet.' };
+    }
 
     order.paymentStatus = 'verified';
     order.status = 'confirmed';
     order.statusTimeline.push({
       status: 'confirmed',
       timestamp: new Date().toISOString(),
-      note: `Admin verified UPI bank credit for UTR: ${order.utrNumber || 'N/A'}. Order confirmed.`,
+      note: `Admin verified payment for UTR: ${order.utrNumber || 'COD Doorstep'}. Order confirmed.`,
     });
 
     this.logAudit('PAYMENT_VERIFIED', actor, `Verified payment for Order ${orderId}`, orderId);
     this.saveDatabaseSync();
-    this.syncOrderStatusToSupabase(orderId, 'confirmed', 'Admin verified UPI bank credit', actor).catch(() => {});
-    return true;
+    this.syncOrderStatusToSupabase(orderId, 'confirmed', 'Admin verified UPI bank credit', actor).catch((err) => {
+      console.error('[Supabase Sync Error] verifyPayment:', err);
+    });
+    return { success: true };
   }
 
-  public submitUtr(orderId: string, utrNumber: string): boolean {
+  public submitUtr(orderId: string, utrNumber: string): { success: boolean; error?: string } {
     const order = this.data.orders.find(o => o.id === orderId);
-    if (!order) return false;
+    if (!order) return { success: false, error: 'Order not found' };
 
-    order.utrNumber = utrNumber.trim();
+    const cleanUtr = utrNumber.trim();
+    if (!/^[a-zA-Z0-9]{6,24}$/.test(cleanUtr)) {
+      return { success: false, error: 'Invalid UTR format. Expected 6-to-24 alphanumeric characters.' };
+    }
+
+    // State machine guard: UTR can only be submitted for pending orders
+    if (order.status === 'confirmed' || order.status === 'processing' || order.status === 'shipped' || order.status === 'delivered') {
+      return { success: false, error: `Order is already ${order.status}. Payment has already been verified.` };
+    }
+    if (order.status === 'cancelled') {
+      return { success: false, error: 'Cannot submit UTR for a cancelled order.' };
+    }
+    if (order.paymentStatus === 'verified') {
+      return { success: false, error: 'Payment is already verified for this order.' };
+    }
+
+    order.utrNumber = cleanUtr;
     order.paymentStatus = 'submitted';
     order.paymentSubmittedAt = new Date().toISOString();
     order.status = 'payment_submitted';
     order.statusTimeline.push({
       status: 'payment_submitted',
       timestamp: new Date().toISOString(),
-      note: `Customer submitted 12-digit UPI UTR: ${utrNumber.trim()}. Admin verification pending.`,
+      note: `Customer submitted UPI UTR: ${cleanUtr}. Admin verification pending.`,
     });
 
-    this.logAudit('UTR_SUBMITTED', 'Customer', `Submitted UTR ${utrNumber} for Order ${orderId}`, orderId);
+    this.logAudit('UTR_SUBMITTED', 'Customer', `Submitted UTR for Order ${orderId}`, orderId);
     this.saveDatabaseSync();
-    this.syncUtrToSupabase(orderId, utrNumber).catch(() => {});
-    return true;
+    this.syncUtrToSupabase(orderId, cleanUtr).catch((err) => {
+      console.error('[Supabase Sync Error] submitUtr:', err);
+    });
+    return { success: true };
   }
 
   public trackOrder(orderId: string, phone: string): { success: boolean; order?: Order; error?: string } {
     const cleanOid = orderId.trim().toUpperCase();
     const cleanPhone = phone.trim().replace(/[^0-9]/g, '');
 
-    if (!cleanPhone || cleanPhone.length < 4) {
-      return { success: false, error: 'Please enter at least 4 digits of the phone number used when placing the order.' };
+    // Require full 10-digit phone match to prevent brute-force enumeration
+    if (cleanPhone.length !== 10) {
+      return { success: false, error: 'Please enter your complete 10-digit mobile number used when placing the order.' };
     }
 
     const found = this.data.orders.find(o => {
       const orderPhone = o.customer.phone.replace(/[^0-9]/g, '');
-      return o.id.toUpperCase() === cleanOid && 
-        (orderPhone.endsWith(cleanPhone) || orderPhone === cleanPhone);
+      return o.id.toUpperCase() === cleanOid && orderPhone === cleanPhone;
     });
 
     if (!found) {
-      return { success: false, error: 'No matching order found with this Order ID and Phone combination.' };
+      return { success: false, error: 'No matching order found with this Order ID and 10-digit Phone combination.' };
     }
 
-    // Mask sensitive personal information to prevent data exposure
+    // Deep mask sensitive personal information to prevent PII harvesting
     const maskedCustomer: CustomerDetails = {
-      ...found.customer,
       fullName: found.customer.fullName.split(' ').map(p => p.length > 1 ? p[0] + '***' : p).join(' '),
-      phone: found.customer.phone.length >= 6 
-        ? found.customer.phone.slice(0, 3) + '****' + found.customer.phone.slice(-3)
-        : '******',
-      address: 'Masked for security',
-      landmark: undefined,
+      phone: found.customer.phone.slice(0, 3) + '*****' + found.customer.phone.slice(-2),
+      address: 'Protected Destination, ' + (found.customer.district || 'Kerala'),
+      pincode: found.customer.pincode.slice(0, 3) + '***',
+      district: found.customer.district,
+      landmark: found.customer.landmark ? 'Protected Landmark' : undefined,
       orderNotes: undefined,
     };
 
     const sanitizedOrder: Order = {
       ...found,
       customer: maskedCustomer,
+      utrNumber: found.utrNumber ? found.utrNumber.slice(0, 4) + '******' : undefined,
     };
 
     return { success: true, order: sanitizedOrder };

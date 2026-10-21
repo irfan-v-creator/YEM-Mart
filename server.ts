@@ -18,18 +18,42 @@ let viteDevServer: any = null;
 
 const app = express();
 
-// Enable CORS and Preflight for AI Studio preview, cloud domains, and localhost
+function isOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true; // Non-browser / same-origin requests
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1') return true;
+    if (host === 'yemmart.in' || host.endsWith('.yemmart.in')) return true;
+    if (host.endsWith('.vercel.app')) return true;
+    if (host.endsWith('.run.app')) return true;
+    if (process.env.APP_URL) {
+      const appUrl = new URL(process.env.APP_URL);
+      if (appUrl.hostname.toLowerCase() === host) return true;
+    }
+  } catch {}
+  return false;
+}
+
+// Enable CORS and Preflight with strict origin allow-list
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin) {
+  const allowed = isOriginAllowed(origin);
+
+  if (allowed && origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else if (!origin) {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-admin-actor, x-admin-token, Accept');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
   if (req.method === 'OPTIONS') {
+    if (!allowed && origin) {
+      return res.status(403).json({ error: 'Origin not allowed by CORS' });
+    }
     return res.sendStatus(204);
   }
   next();
@@ -417,10 +441,14 @@ app.get('/category/:slug', handleCategorySeoRoute);
 app.get('/category/:slug/*', handleCategorySeoRoute);
 
 // --- ADMIN AUTHENTICATION & SECURITY STATE ---
-const FALLBACK_ADMIN_PASSWORD = 'yem-admin-2026';
-const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || FALLBACK_ADMIN_PASSWORD).trim().replace(/^["']|["']$/g, '');
-const AUTH_SECRET = process.env.ADMIN_AUTH_SECRET || ADMIN_PASSWORD || 'yem-mart-security-key-2026';
+// Require ADMIN_PASSWORD and ADMIN_AUTH_SECRET from environment (fail closed if missing)
+const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
+const AUTH_SECRET = (process.env.ADMIN_AUTH_SECRET || '').trim().replace(/^["']|["']$/g, '');
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+if (!ADMIN_PASSWORD || !AUTH_SECRET) {
+  console.warn('[SECURITY WARNING] ADMIN_PASSWORD or ADMIN_AUTH_SECRET is not configured in environment. Admin authentication will fail closed.');
+}
 
 interface AdminSession {
   token: string;
@@ -431,25 +459,25 @@ interface AdminSession {
 }
 
 const adminSessions = new Map<string, AdminSession>();
+const revokedTokens = new Set<string>();
 const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
 
 function getClientIp(req: express.Request): string {
-  return (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.trim()) {
+    const parts = xff.split(',').map(p => p.trim());
+    return parts[parts.length - 1] || req.ip || req.socket.remoteAddress || 'unknown';
+  }
+  return req.ip || req.socket.remoteAddress || 'unknown';
 }
 
 function verifyAdminToken(token: string): AdminSession | null {
   if (!token) return null;
   const cleanToken = token.trim().replace(/^["']|["']$/g, '');
-  
-  // 1. Direct passkey as bearer token support (immediate fallback)
-  if (cleanToken === FALLBACK_ADMIN_PASSWORD || (ADMIN_PASSWORD && cleanToken === ADMIN_PASSWORD)) {
-    return {
-      token: cleanToken,
-      role: 'owner',
-      actorName: 'Admin (Owner)',
-      createdAt: Date.now(),
-      expiresAt: Date.now() + SESSION_DURATION_MS,
-    };
+
+  // 1. Explicitly check if token has been revoked on logout
+  if (revokedTokens.has(cleanToken)) {
+    return null;
   }
 
   // 2. In-memory session lookup
@@ -462,13 +490,19 @@ function verifyAdminToken(token: string): AdminSession | null {
     return memSession;
   }
 
-  // 3. Stateless self-verifying signed token (supports Vercel serverless / container restarts)
+  // 3. Stateless self-verifying signed token (requires valid AUTH_SECRET)
+  if (!AUTH_SECRET || AUTH_SECRET.length < 16) {
+    return null;
+  }
+
   try {
     const parts = cleanToken.split('.');
     if (parts.length === 2) {
       const [payloadB64, sig] = parts;
       const expectedSig = crypto.createHmac('sha256', AUTH_SECRET).update(payloadB64).digest('hex');
-      if (crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) {
+      const sigBuf = Buffer.from(sig);
+      const expectedSigBuf = Buffer.from(expectedSig);
+      if (sigBuf.length === expectedSigBuf.length && crypto.timingSafeEqual(sigBuf, expectedSigBuf)) {
         const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
         if (payload && payload.expiresAt && Date.now() <= payload.expiresAt) {
           return {
@@ -497,7 +531,7 @@ function extractToken(req: express.Request): string | null {
   if (typeof customHeader === 'string' && customHeader.trim()) {
     return customHeader.trim();
   }
-  // 3. Cookie header: "yem_admin_token=<token>"
+  // 3. HttpOnly Cookie header: "yem_admin_token=<token>"
   const cookieHeader = req.headers.cookie;
   if (cookieHeader) {
     const match = cookieHeader.match(/(?:^|;\s*)yem_admin_token=([^;]+)/);
@@ -505,10 +539,7 @@ function extractToken(req: express.Request): string | null {
       return decodeURIComponent(match[1]).trim();
     }
   }
-  // 4. Query parameter fallback: "?admin_token=<token>"
-  if (typeof req.query?.admin_token === 'string' && req.query.admin_token.trim()) {
-    return req.query.admin_token.trim();
-  }
+  // No query parameter token acceptance (prevents token leakage in logs/URLs)
   return null;
 }
 
@@ -547,11 +578,56 @@ const requireOwnerOrManager = (req: express.Request, res: express.Response, next
   next();
 };
 
+// --- IN-MEMORY RATE LIMITER HELPER ---
+function rateLimit(options: { windowMs: number; max: number; message?: string }) {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, val] of hits.entries()) {
+      if (now > val.resetAt) hits.delete(key);
+    }
+  }, options.windowMs * 2).unref();
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = getClientIp(req);
+    const now = Date.now();
+    const record = hits.get(ip) || { count: 0, resetAt: now + options.windowMs };
+    if (now > record.resetAt) {
+      record.count = 0;
+      record.resetAt = now + options.windowMs;
+    }
+    record.count += 1;
+    hits.set(ip, record);
+    if (record.count > options.max) {
+      return res.status(429).json({ 
+        error: options.message || 'Too many requests. Please try again later.' 
+      });
+    }
+    next();
+  };
+}
+
 // --- ADMIN LOGIN / AUTH ENDPOINTS ---
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', async (req, res) => {
   const ip = getClientIp(req);
   const now = Date.now();
   const attemptRecord = loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+
+  // 1. Lock check FIRST before comparing passwords
+  if (attemptRecord.lockedUntil > now) {
+    const remainingSec = Math.ceil((attemptRecord.lockedUntil - now) / 1000);
+    return res.status(429).json({ 
+      error: `Too many failed login attempts. Try again in ${remainingSec} seconds.` 
+    });
+  }
+
+  // 2. Fail closed if server security variables are missing
+  if (!ADMIN_PASSWORD || !AUTH_SECRET || AUTH_SECRET.length < 16) {
+    console.error('[SECURITY CRITICAL] Admin login attempted but ADMIN_PASSWORD or ADMIN_AUTH_SECRET is not configured.');
+    return res.status(503).json({
+      error: 'Admin authentication is currently unavailable: secure server environment variables (ADMIN_PASSWORD and ADMIN_AUTH_SECRET) must be configured.'
+    });
+  }
 
   const { password, role = 'owner' } = req.body || {};
 
@@ -560,16 +636,13 @@ app.post('/api/admin/login', (req, res) => {
   }
 
   const cleanInput = password.trim().replace(/^["']|["']$/g, '');
-  const envPassword = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
 
-  // Accept hardcoded fallback password "yem-admin-2026" alongside process.env.ADMIN_PASSWORD
-  const isMatch =
-    cleanInput === FALLBACK_ADMIN_PASSWORD ||
-    (envPassword.length > 0 && cleanInput === envPassword) ||
-    cleanInput === ADMIN_PASSWORD;
+  // 3. Timing-safe password comparison
+  const inputBuf = Buffer.from(cleanInput);
+  const passBuf = Buffer.from(ADMIN_PASSWORD);
+  const isMatch = inputBuf.length === passBuf.length && crypto.timingSafeEqual(inputBuf, passBuf);
 
   if (isMatch) {
-    // Legitimate admin login -> Always clear any previous lockout/attempts
     loginAttempts.delete(ip);
 
     const validRoles = ['owner', 'manager', 'fulfillment', 'support'] as const;
@@ -577,13 +650,12 @@ app.post('/api/admin/login', (req, res) => {
     const actorName = `Admin (${selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1)})`;
     const expiresAt = now + SESSION_DURATION_MS;
 
-    // Create a self-contained signed token for resilience across serverless/container restarts
     const payload = {
       role: selectedRole,
       actorName,
       createdAt: now,
       expiresAt,
-      salt: crypto.randomBytes(8).toString('hex'),
+      salt: crypto.randomBytes(16).toString('hex'),
     };
     const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
     const sig = crypto.createHmac('sha256', AUTH_SECRET).update(payloadB64).digest('hex');
@@ -599,10 +671,11 @@ app.post('/api/admin/login', (req, res) => {
 
     adminSessions.set(token, session);
 
-    // Set cookie header for browsers that support credentials/cookies
+    // Set HttpOnly, SameSite=Lax cookie with Secure when in production/https
+    const isSecure = process.env.NODE_ENV === 'production' || req.protocol === 'https' || req.get('x-forwarded-proto') === 'https';
     res.setHeader(
       'Set-Cookie',
-      `yem_admin_token=${encodeURIComponent(token)}; Path=/; Max-Age=${SESSION_DURATION_MS / 1000}; SameSite=Lax`
+      `yem_admin_token=${encodeURIComponent(token)}; Path=/; Max-Age=${SESSION_DURATION_MS / 1000}; HttpOnly; SameSite=Lax${isSecure ? '; Secure' : ''}`
     );
 
     return res.status(200).json({
@@ -614,16 +687,9 @@ app.post('/api/admin/login', (req, res) => {
     });
   }
 
-  // Failed attempt
-  if (attemptRecord.lockedUntil > now) {
-    const remainingSec = Math.ceil((attemptRecord.lockedUntil - now) / 1000);
-    return res.status(429).json({ 
-      error: `Too many failed login attempts. Try again in ${remainingSec} seconds.` 
-    });
-  }
-
+  // 4. Failed attempt: increment counter, lock if >= 5 attempts, and add timing delay
   attemptRecord.count += 1;
-  if (attemptRecord.count >= 10) {
+  if (attemptRecord.count >= 5) {
     attemptRecord.lockedUntil = now + 15 * 60 * 1000;
     loginAttempts.set(ip, attemptRecord);
     return res.status(429).json({ 
@@ -632,17 +698,25 @@ app.post('/api/admin/login', (req, res) => {
   }
   loginAttempts.set(ip, attemptRecord);
 
+  // Small delay to slow down automated dictionary attacks
+  await new Promise((r) => setTimeout(r, 400));
+
   return res.status(401).json({ 
     error: 'Invalid admin credentials. Please enter the correct store management key.' 
   });
 });
 
 app.post('/api/admin/logout', (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7).trim();
+  const token = extractToken(req);
+  if (token) {
+    revokedTokens.add(token);
     adminSessions.delete(token);
   }
+  // Clear cookie
+  res.setHeader(
+    'Set-Cookie',
+    `yem_admin_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`
+  );
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
@@ -664,53 +738,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', store: 'YEM MART', version: '1.0' });
 });
 
-// --- SEO ENDPOINTS ---
-app.get('/robots.txt', (req, res) => {
-  res.type('text/plain');
-  res.send(`User-agent: *
-Allow: /
-Disallow: /admin
-Sitemap: ${req.protocol}://${req.get('host')}/sitemap.xml
-`);
-});
-
-app.get('/sitemap.xml', (req, res) => {
-  const host = `${req.protocol}://${req.get('host')}`;
-  const products = store.getProducts({ status: 'published' });
-  const categories = ['Fashion', 'Accessories', 'Electronics', 'Home & Kitchen', 'Stationery', 'Kids', 'Gifts', 'Others'];
-
-  let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>${host}/</loc>
-    <changefreq>daily</changefreq>
-    <priority>1.0</priority>
-  </url>`;
-
-  for (const cat of categories) {
-    xml += `
-  <url>
-    <loc>${host}/?category=${encodeURIComponent(cat)}</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>`;
-  }
-
-  for (const p of products) {
-    xml += `
-  <url>
-    <loc>${host}/?product=${encodeURIComponent(p.id)}</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
-  </url>`;
-  }
-
-  xml += `\n</urlset>`;
-  res.type('application/xml');
-  res.send(xml);
-});
-
-// --- PRODUCTS API ---
 // --- PRODUCTS API ---
 app.get('/api/products', async (req, res) => {
   const { category, status, search, fresh } = req.query;
@@ -738,7 +765,8 @@ app.get('/api/products/:id', async (req, res) => {
   res.json(product);
 });
 
-app.post('/api/products', requireAdminAuth, async (req, res) => {
+// Admin-only product creation & modifications (Owner or Manager only)
+app.post('/api/products', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const result = await store.saveProduct(req.body, actor);
   if (!result.success) {
@@ -754,7 +782,7 @@ app.delete('/api/products/:id', requireOwnerOrManager, async (req, res) => {
   res.json({ success: true, message: 'Product deleted' });
 });
 
-app.post('/api/products/bulk-import', requireAdminAuth, async (req, res) => {
+app.post('/api/products/bulk-import', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const { rows } = req.body;
   if (!Array.isArray(rows)) {
@@ -764,8 +792,8 @@ app.post('/api/products/bulk-import', requireAdminAuth, async (req, res) => {
   res.json(result);
 });
 
-// --- CART VALIDATION API (TRUSTED SERVER-SIDE) ---
-app.post('/api/cart/validate', (req, res) => {
+// --- CART VALIDATION API (TRUSTED SERVER-SIDE, RATE-LIMITED) ---
+app.post('/api/cart/validate', rateLimit({ windowMs: 60 * 1000, max: 40 }), (req, res) => {
   const { items, couponCode } = req.body;
   if (!Array.isArray(items)) {
     return res.status(400).json({ error: 'items array is required' });
@@ -791,8 +819,8 @@ app.get('/api/orders/:id', requireAdminAuth, (req, res) => {
   res.json(order);
 });
 
-// Customer can place order with server-side validation
-app.post('/api/orders', (req, res) => {
+// Customer can place order with server-side validation & rate limiting
+app.post('/api/orders', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: 'Too many order requests. Please wait a moment.' }), (req, res) => {
   const { customer, items, couponCode } = req.body;
   if (!customer || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Customer details and items are required' });
@@ -809,32 +837,32 @@ app.put('/api/orders/:id/status', requireAdminAuth, (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const { status, note } = req.body;
   if (!status) return res.status(400).json({ error: 'status is required' });
-  const success = store.updateOrderStatus(req.params.id, status, note, actor);
-  if (!success) return res.status(404).json({ error: 'Order not found' });
+  const result = store.updateOrderStatus(req.params.id, status, note, actor);
+  if (!result.success) return res.status(400).json({ error: result.error || 'Failed to update order status' });
   res.json({ success: true, message: `Status updated to ${status}` });
 });
 
-// Admin-only payment verification (Customers CANNOT verify payments!)
-app.put('/api/orders/:id/verify-payment', requireAdminAuth, (req, res) => {
+// Admin-only payment verification (Owner or Manager ONLY; Customers/Support CANNOT verify payments!)
+app.put('/api/orders/:id/verify-payment', requireOwnerOrManager, (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
-  const success = store.verifyPayment(req.params.id, actor);
-  if (!success) return res.status(404).json({ error: 'Order not found' });
+  const result = store.verifyPayment(req.params.id, actor);
+  if (!result.success) return res.status(400).json({ error: result.error || 'Failed to verify payment' });
   res.json({ success: true, message: 'Payment verified and order confirmed' });
 });
 
-// Customer submission of UTR (Payment status -> submitted, NEVER verified)
-app.post('/api/orders/:id/submit-utr', (req, res) => {
+// Customer submission of UTR (Payment status -> submitted, NEVER verified, rate limited)
+app.post('/api/orders/:id/submit-utr', rateLimit({ windowMs: 10 * 60 * 1000, max: 10, message: 'Too many UTR submission attempts. Please wait.' }), (req, res) => {
   const { utrNumber } = req.body;
   if (!utrNumber || typeof utrNumber !== 'string' || utrNumber.trim().length < 6) {
-    return res.status(400).json({ error: 'Valid 6-to-18 character UPI UTR number is required' });
+    return res.status(400).json({ error: 'Valid 6-to-24 character UPI UTR number is required' });
   }
-  const success = store.submitUtr(req.params.id, utrNumber.trim());
-  if (!success) return res.status(404).json({ error: 'Order not found' });
+  const result = store.submitUtr(req.params.id, utrNumber.trim());
+  if (!result.success) return res.status(400).json({ error: result.error || 'Failed to submit UTR' });
   res.json({ success: true, message: 'UTR submitted for verification' });
 });
 
-// Customer order tracking with privacy masking (Requires order ID + matching phone)
-app.post('/api/orders/track', (req, res) => {
+// Customer order tracking with privacy masking (Requires order ID + full matching phone, rate-limited)
+app.post('/api/orders/track', rateLimit({ windowMs: 5 * 60 * 1000, max: 15, message: 'Too many tracking attempts. Please wait 5 minutes.' }), (req, res) => {
   const { orderId, phone } = req.body;
   if (!orderId || !phone) {
     return res.status(400).json({ error: 'Order ID and Phone number are required' });
@@ -846,7 +874,7 @@ app.post('/api/orders/track', (req, res) => {
   res.json(result.order);
 });
 
-// --- INVENTORY STOCK ADJUSTMENT (Admin-only) ---
+// --- INVENTORY STOCK ADJUSTMENT (Admin-only: Owner or Manager) ---
 app.post('/api/inventory/adjust', requireOwnerOrManager, async (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';
   const { productId, variantSku, newStock, reason } = req.body;
@@ -872,8 +900,8 @@ app.put('/api/settings', requireOwnerOrManager, async (req, res) => {
   res.json(updated);
 });
 
-// --- STORE REHYDRATION & CACHE INVALIDATION ---
-app.post('/api/store/rehydrate', async (req, res) => {
+// --- STORE REHYDRATION & CACHE INVALIDATION (Admin-only: Owner or Manager) ---
+app.post('/api/store/rehydrate', requireOwnerOrManager, async (req, res) => {
   const success = await store.hydrateFromSupabase();
   res.json({ 
     success, 
@@ -900,17 +928,17 @@ app.delete('/api/coupons/:id', requireOwnerOrManager, async (req, res) => {
   res.json({ success: true });
 });
 
-// --- AUDIT & STOCK LOGS API (Admin-only) ---
-app.get('/api/audit-logs', requireAdminAuth, (req, res) => {
+// --- AUDIT & STOCK LOGS API (Admin-only: Owner or Manager) ---
+app.get('/api/audit-logs', requireOwnerOrManager, (req, res) => {
   res.json(store.getAuditLogs());
 });
 
-app.get('/api/stock-logs', requireAdminAuth, (req, res) => {
+app.get('/api/stock-logs', requireOwnerOrManager, (req, res) => {
   res.json(store.getStockLogs());
 });
 
-// Gemini Chatbot Endpoint with Google Search Grounding
-app.post('/api/chat', async (req, res) => {
+// Gemini Chatbot Endpoint with Google Search Grounding (Rate-limited)
+app.post('/api/chat', rateLimit({ windowMs: 60 * 1000, max: 20, message: 'Chat rate limit reached. Please wait a moment.' }), async (req, res) => {
   try {
     const { messages, productContext } = req.body;
 

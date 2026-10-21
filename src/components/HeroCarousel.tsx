@@ -152,8 +152,8 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
             <Sparkles className="w-4 h-4" />
           </div>
           <div>
-            <p className="font-bold text-[#171717]">Instant UPI Verification</p>
-            <p className="text-neutral-500 text-[11px]">GPay, PhonePe, Paytm supported</p>
+            <p className="font-bold text-[#171717]">Direct Support</p>
+            <p className="text-neutral-500 text-[11px]">Dedicated assistance on WhatsApp</p>
           </div>
         </div>
       </div>

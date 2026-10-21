@@ -227,8 +227,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                     ? 'bg-blue-100 text-blue-800'
                     : 'bg-amber-100 text-amber-800'
                 }`}>
-                  UPI: {trackedOrder.paymentStatus.toUpperCase()}
-                  {trackedOrder.utrNumber ? ` (UTR: ${trackedOrder.utrNumber})` : ''}
+                  Payment: {trackedOrder.paymentStatus === 'verified' ? 'Verified' : 'Pending Confirmation'}
                 </span>
               </div>
             </div>
@@ -294,12 +293,10 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                     </div>
                     <div>
                       <h5 className="font-bold text-[#171717]">
-                        2. WhatsApp Message & Payment Submission
+                        2. WhatsApp Order Dispatch
                       </h5>
                       <p className="text-neutral-500 text-[11px] mt-0.5">
-                        {trackedOrder.utrNumber
-                          ? `Payment UTR Reference submitted: ${trackedOrder.utrNumber}`
-                          : 'Awaiting customer WhatsApp dispatch and UPI UTR submission'}
+                        Awaiting customer WhatsApp message dispatch and store confirmation
                       </p>
                     </div>
                   </div>

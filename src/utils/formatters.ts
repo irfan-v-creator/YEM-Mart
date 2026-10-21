@@ -182,10 +182,9 @@ ${discountLine}━━━━━━━━━━━━━━━━━━━━━�
 💎 *FINAL PAYABLE: ₹${finalGrandTotal.toLocaleString('en-IN')}*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💳 *PAYMENT INSTRUCTIONS (UPI Transfer)*
-• Official Store UPI ID: \`${upiIdArg}\`
-• Scan & Pay via Google Pay, PhonePe, Paytm, or BHIM.
-• _Please send your payment screenshot or 12-digit UPI reference (UTR) here for priority dispatch._
+💳 *PAYMENT & ORDER CONFIRMATION*
+• Please tap SEND to share your order with YEM MART on WhatsApp.
+• Our support team will confirm item availability, payment details, and dispatch schedule directly with you.
 
 📍 *ORDER VERIFICATION & TRACKING*
 Track your order anytime on our store:
@@ -224,9 +223,8 @@ ${variant ? `• *Selected Option:* ${variant.name}\n` : ''}• *Brand:* ${produ
 • Service: Kerala Fast Courier
 • Shipping: ${deliveryNotice}
 
-💳 *PAYMENT METHOD (UPI Transfer)*
-• Store UPI ID: \`${upiId}\`
-• Accepts: Google Pay, PhonePe, Paytm, BHIM
+💳 *PAYMENT & ORDER CONFIRMATION*
+• Payment details and delivery confirmation are handled directly in this chat.
 
 📍 *CUSTOMER DELIVERY DETAILS (Please fill):*
 • Full Name: 

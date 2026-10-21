@@ -17,10 +17,7 @@ function safeGetStorage(key: string): string {
     }
   } catch {}
   try {
-    if (typeof document !== 'undefined') {
-      const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + key + '=([^;]+)'));
-      if (match && match[1]) return decodeURIComponent(match[1]);
-    }
+    // Cookie is handled exclusively by server via HttpOnly headers
   } catch {}
   return '';
 }
@@ -36,11 +33,6 @@ function safeSetStorage(key: string, value: string): void {
       window.localStorage.setItem(key, value);
     }
   } catch {}
-  try {
-    if (typeof document !== 'undefined') {
-      document.cookie = `${key}=${encodeURIComponent(value)}; path=/; max-age=28800; SameSite=Lax`;
-    }
-  } catch {}
 }
 
 function safeRemoveStorage(key: string): void {
@@ -52,11 +44,6 @@ function safeRemoveStorage(key: string): void {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.removeItem(key);
-    }
-  } catch {}
-  try {
-    if (typeof document !== 'undefined') {
-      document.cookie = `${key}=; path=/; max-age=0; SameSite=Lax`;
     }
   } catch {}
 }
