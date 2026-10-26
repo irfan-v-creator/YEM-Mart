@@ -29,6 +29,9 @@ const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, '../data');
 const DB_FILE = path.join(DATA_DIR, 'yem_database.json');
 
+// Vercel Serverless and AWS Lambda execution environment detection
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
 export interface DatabaseSchema {
   products: Product[];
   orders: Order[];
@@ -50,13 +53,15 @@ class Store {
     // Ensure default supportPhone is strictly 7510447887
     if (this.data.settings && (!this.data.settings.supportPhone || this.data.settings.supportPhone.includes('94000'))) {
       this.data.settings.supportPhone = '7510447887';
-      this.saveDatabaseSync();
+      if (!isServerless) {
+        this.saveDatabaseSync();
+      }
     }
 
     // Hydrate from Supabase PostgreSQL if credentials configured
     if (isSupabaseConfigured()) {
       this.hydrateFromSupabase().catch(err => {
-        console.warn('Supabase initial hydration notice (using local storage):', err?.message || err);
+        console.warn('Supabase initial hydration notice:', err?.message || err);
       });
     }
   }
@@ -65,15 +70,22 @@ class Store {
     return this.lastHydratedAt;
   }
 
-  private ensureDataDirectory() {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+  private ensureDataDirectory(): boolean {
+    if (isServerless) return false;
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      return true;
+    } catch (err) {
+      // In serverless / read-only filesystem, directory creation is safely skipped
+      return false;
     }
   }
 
   private loadDatabase(): DatabaseSchema {
     try {
-      if (fs.existsSync(DB_FILE)) {
+      if (!isServerless && fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         return {
@@ -86,7 +98,7 @@ class Store {
         };
       }
     } catch (err) {
-      console.error('Failed to read database file, initializing defaults:', err);
+      console.warn('Notice reading local database file, using defaults:', (err as any)?.message || err);
     }
 
     const defaultData: DatabaseSchema = {
@@ -97,19 +109,26 @@ class Store {
       auditLogs: INITIAL_AUDIT_LOGS,
       stockLogs: INITIAL_STOCK_LOGS,
     };
-    this.saveDatabaseSync(defaultData);
+    if (!isServerless) {
+      this.saveDatabaseSync(defaultData);
+    }
     return defaultData;
   }
 
   private saveDatabaseSync(dataToSave = this.data) {
+    if (isServerless) {
+      // In Vercel serverless, Supabase is the persistent store; skip immutable /var/task filesystem writes
+      return;
+    }
     try {
-      this.ensureDataDirectory();
+      const ready = this.ensureDataDirectory();
+      if (!ready) return;
       const tmpFile = `${DB_FILE}.${Date.now()}.tmp`;
       const jsonStr = JSON.stringify(dataToSave, null, 2);
       fs.writeFileSync(tmpFile, jsonStr, 'utf-8');
       fs.renameSync(tmpFile, DB_FILE);
     } catch (err) {
-      console.error('Error writing to atomic database file:', err);
+      console.warn('Notice writing to local database file (relying on Supabase):', (err as any)?.message || err);
     }
   }
 

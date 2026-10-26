@@ -5,6 +5,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
+import * as argon2 from '@node-rs/argon2';
+import bcrypt from 'bcryptjs';
 import { store } from './server/store.js';
 import { isSupabaseConfigured, getSupabaseClient } from './server/supabase.js';
 import type { Product } from './src/types/index.js';
@@ -441,13 +443,54 @@ app.get('/category/:slug', handleCategorySeoRoute);
 app.get('/category/:slug/*', handleCategorySeoRoute);
 
 // --- ADMIN AUTHENTICATION & SECURITY STATE ---
-// Require ADMIN_PASSWORD and ADMIN_AUTH_SECRET from environment (fail closed if missing)
-const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
+// Require ADMIN_PASSWORD_HASH (Argon2id or bcrypt) or legacy ADMIN_PASSWORD during migration, and ADMIN_AUTH_SECRET
+const ADMIN_PASSWORD_HASH = (process.env.ADMIN_PASSWORD_HASH || '').trim().replace(/^["']|["']$/g, '');
+const LEGACY_ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
 const AUTH_SECRET = (process.env.ADMIN_AUTH_SECRET || '').trim().replace(/^["']|["']$/g, '');
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
 
-if (!ADMIN_PASSWORD || !AUTH_SECRET) {
-  console.warn('[SECURITY WARNING] ADMIN_PASSWORD or ADMIN_AUTH_SECRET is not configured in environment. Admin authentication will fail closed.');
+if (!ADMIN_PASSWORD_HASH && !LEGACY_ADMIN_PASSWORD) {
+  console.warn('[SECURITY WARNING] Neither ADMIN_PASSWORD_HASH nor ADMIN_PASSWORD is configured in environment. Admin authentication will fail closed.');
+}
+if (!AUTH_SECRET || AUTH_SECRET.length < 16) {
+  console.warn('[SECURITY WARNING] ADMIN_AUTH_SECRET is not configured or too short (must be >= 16 chars). Admin authentication will fail closed.');
+}
+
+/**
+ * Securely verifies submitted plain-text password against stored Argon2id or bcrypt hash.
+ * Includes graceful fallback to legacy ADMIN_PASSWORD to prevent lockouts during migration.
+ */
+async function verifyAdminPassword(inputPassword: string): Promise<boolean> {
+  if (!inputPassword || typeof inputPassword !== 'string') return false;
+  const cleanInput = inputPassword.trim().replace(/^["']|["']$/g, '');
+  if (!cleanInput) return false;
+
+  // 1. Primary: Verify against Argon2id ($argon2id$) or bcrypt ($2a$, $2b$, $2y$) hash
+  if (ADMIN_PASSWORD_HASH) {
+    try {
+      if (ADMIN_PASSWORD_HASH.startsWith('$argon2')) {
+        return await argon2.verify(ADMIN_PASSWORD_HASH, cleanInput);
+      }
+      if (ADMIN_PASSWORD_HASH.startsWith('$2a$') || ADMIN_PASSWORD_HASH.startsWith('$2b$') || ADMIN_PASSWORD_HASH.startsWith('$2y$')) {
+        return await bcrypt.compare(cleanInput, ADMIN_PASSWORD_HASH);
+      }
+      console.error('[SECURITY ERROR] ADMIN_PASSWORD_HASH format not recognized. Must be valid Argon2id ($argon2id$) or bcrypt ($2b$) string.');
+      return false;
+    } catch (err) {
+      console.error('[SECURITY ERROR] Failed verifying password hash:', err);
+      return false;
+    }
+  }
+
+  // 2. Migration fallback: If ADMIN_PASSWORD_HASH not yet configured in environment, verify against legacy plain-text
+  if (LEGACY_ADMIN_PASSWORD) {
+    console.warn('[SECURITY NOTICE] Admin authenticated using legacy plain-text passkey. Please run `npm run hash-password` and configure ADMIN_PASSWORD_HASH in environment.');
+    const inputBuf = Buffer.from(cleanInput);
+    const passBuf = Buffer.from(LEGACY_ADMIN_PASSWORD);
+    return inputBuf.length === passBuf.length && crypto.timingSafeEqual(inputBuf, passBuf);
+  }
+
+  return false;
 }
 
 interface AdminSession {
@@ -622,10 +665,10 @@ app.post('/api/admin/login', async (req, res) => {
   }
 
   // 2. Fail closed if server security variables are missing
-  if (!ADMIN_PASSWORD || !AUTH_SECRET || AUTH_SECRET.length < 16) {
-    console.error('[SECURITY CRITICAL] Admin login attempted but ADMIN_PASSWORD or ADMIN_AUTH_SECRET is not configured.');
+  if ((!ADMIN_PASSWORD_HASH && !LEGACY_ADMIN_PASSWORD) || !AUTH_SECRET || AUTH_SECRET.length < 16) {
+    console.error('[SECURITY CRITICAL] Admin login attempted but neither ADMIN_PASSWORD_HASH nor ADMIN_PASSWORD, or ADMIN_AUTH_SECRET is configured.');
     return res.status(503).json({
-      error: 'Admin authentication is currently unavailable: secure server environment variables (ADMIN_PASSWORD and ADMIN_AUTH_SECRET) must be configured.'
+      error: 'Admin authentication is currently unavailable: secure server environment variables must be configured.'
     });
   }
 
@@ -635,12 +678,8 @@ app.post('/api/admin/login', async (req, res) => {
     return res.status(400).json({ error: 'Password is required' });
   }
 
-  const cleanInput = password.trim().replace(/^["']|["']$/g, '');
-
-  // 3. Timing-safe password comparison
-  const inputBuf = Buffer.from(cleanInput);
-  const passBuf = Buffer.from(ADMIN_PASSWORD);
-  const isMatch = inputBuf.length === passBuf.length && crypto.timingSafeEqual(inputBuf, passBuf);
+  // 3. Cryptographic hash verification (Argon2id / bcrypt)
+  const isMatch = await verifyAdminPassword(password);
 
   if (isMatch) {
     loginAttempts.delete(ip);
