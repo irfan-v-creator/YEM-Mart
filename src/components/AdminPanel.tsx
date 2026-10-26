@@ -51,6 +51,8 @@ import {
 } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { api } from '../utils/api';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG, isGoogleDriveUrl } from '../utils/imageUrl';
+import { generateNextSku, getCategorySkuPrefix } from '../utils/sku';
 
 interface AdminPanelProps {
   products: Product[];
@@ -113,6 +115,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Product editor state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
+  const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
+  const [brokenImageMap, setBrokenImageMap] = useState<Record<string, boolean>>({});
 
   // CSV Import Modal state
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
@@ -918,11 +922,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {canManageProducts && (
                   <button
                     onClick={() => {
+                      const defaultCat = 'Fashion';
+                      const suggestedSku = generateNextSku(defaultCat, products);
                       const newEmptyProd: Product = {
                         id: `prod-${Date.now()}`,
                         name: '',
                         brand: 'YEM MART',
-                        category: 'Fashion',
+                        category: defaultCat,
                         shortSummary: '',
                         description: '',
                         highlights: ['100% Genuine Quality Guarantee'],
@@ -935,10 +941,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         status: 'published',
                         stock: 10,
                         lowStockThreshold: 3,
-                        sku: `YM-FSH-${Math.floor(100 + Math.random() * 900)}`,
+                        sku: suggestedSku,
                         tags: ['new'],
                         variants: [],
                       };
+                      setIsCreatingNewProduct(true);
                       setEditingProduct(newEmptyProd);
                       setIsAddProductOpen(true);
                     }}
@@ -953,67 +960,81 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
             {/* Products Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {products.map((prod) => (
-                <div
-                  key={prod.id}
-                  className="p-4 rounded-xl border border-[#E7E5E0] bg-[#F7F6F2] flex flex-col justify-between"
-                >
-                  <div className="flex gap-3">
-                    {prod.mainImage && prod.mainImage.trim() ? (
-                      <img
-                        src={prod.mainImage}
-                        alt={prod.name}
-                        className="w-16 h-16 rounded-lg object-contain bg-white p-1 border border-neutral-200 shrink-0"
-                      />
-                    ) : (
-                      <div className="w-16 h-16 rounded-lg bg-white p-1 border border-neutral-200 shrink-0 flex items-center justify-center">
-                        <Package className="w-6 h-6 text-neutral-400" />
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-[10px] font-bold text-neutral-400 uppercase">{prod.category}</span>
-                        <span className={`text-[10px] font-bold px-1.5 rounded ${
-                          prod.status === 'published' 
-                            ? 'bg-emerald-100 text-emerald-800' 
-                            : prod.status === 'scheduled'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-neutral-200 text-neutral-600'
-                        }`}>
-                          {prod.status.toUpperCase()}
-                        </span>
-                      </div>
-                      <h4 className="text-xs font-bold text-[#171717] truncate mt-0.5">{prod.name}</h4>
-                      <p className="text-xs font-extrabold text-[#171717] mt-1">{formatCurrency(prod.price)}</p>
-                      <p className="text-[11px] text-neutral-500">Stock: {prod.stock} units • SKU: {prod.sku}</p>
-                    </div>
-                  </div>
+              {products.map((prod) => {
+                const normalizedImg = normalizeProductImageUrl(prod.mainImage);
+                const isBroken = brokenImageMap[prod.id] || !normalizedImg;
 
-                  <div className="mt-3 pt-3 border-t border-[#E7E5E0] flex items-center justify-between">
-                    <div className="flex items-center gap-1">
-                      {prod.isFeatured && (
-                        <span className="text-[9px] bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">Featured</span>
-                      )}
-                      {prod.isBestDeal && (
-                        <span className="text-[9px] bg-red-100 text-red-900 px-1.5 py-0.5 rounded font-bold">Deal</span>
-                      )}
-                      {prod.isNewArrival && (
-                        <span className="text-[9px] bg-blue-100 text-blue-900 px-1.5 py-0.5 rounded font-bold">New</span>
-                      )}
+                return (
+                  <div
+                    key={prod.id}
+                    className="p-4 rounded-xl border border-[#E7E5E0] bg-[#F7F6F2] flex flex-col justify-between"
+                  >
+                    <div className="flex gap-3">
+                      <div className="relative shrink-0">
+                        <img
+                          src={isBroken ? IMAGE_FALLBACK_SVG : normalizedImg}
+                          alt={prod.name}
+                          onError={() => setBrokenImageMap(prev => ({ ...prev, [prod.id]: true }))}
+                          className="w-16 h-16 rounded-lg object-contain bg-white p-1 border border-neutral-200 shrink-0"
+                        />
+                        {isBroken && (
+                          <div className="absolute -top-1 -right-1 bg-amber-500 text-white rounded-full p-0.5 shadow-xs" title="Image broken or inaccessible">
+                            <AlertTriangle className="w-3 h-3" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[10px] font-bold text-neutral-400 uppercase">{prod.category}</span>
+                          <span className={`text-[10px] font-bold px-1.5 rounded ${
+                            prod.status === 'published' 
+                              ? 'bg-emerald-100 text-emerald-800' 
+                              : prod.status === 'scheduled'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-neutral-200 text-neutral-600'
+                          }`}>
+                            {prod.status.toUpperCase()}
+                          </span>
+                        </div>
+                        <h4 className="text-xs font-bold text-[#171717] truncate mt-0.5">{prod.name}</h4>
+                        <p className="text-xs font-extrabold text-[#171717] mt-1">{formatCurrency(prod.price)}</p>
+                        <p className="text-[11px] text-neutral-500">Stock: {prod.stock} units • SKU: {prod.sku}</p>
+                        {isBroken && (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded">
+                            <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span>Broken / Inaccessible Image</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    {canManageProducts && (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => {
-                            setEditingProduct({ ...prod });
-                            setIsAddProductOpen(false);
-                          }}
-                          className="p-1.5 rounded bg-white text-neutral-600 hover:text-black border border-[#E7E5E0]"
-                          title="Edit Product"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
+                    <div className="mt-3 pt-3 border-t border-[#E7E5E0] flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        {prod.isFeatured && (
+                          <span className="text-[9px] bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">Featured</span>
+                        )}
+                        {prod.isBestDeal && (
+                          <span className="text-[9px] bg-red-100 text-red-900 px-1.5 py-0.5 rounded font-bold">Deal</span>
+                        )}
+                        {prod.isNewArrival && (
+                          <span className="text-[9px] bg-blue-100 text-blue-900 px-1.5 py-0.5 rounded font-bold">New</span>
+                        )}
+                      </div>
+
+                      {canManageProducts && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              setIsCreatingNewProduct(false);
+                              setEditingProduct({ ...prod });
+                              setIsAddProductOpen(false);
+                            }}
+                            className="p-1.5 rounded bg-white text-neutral-600 hover:text-black border border-[#E7E5E0]"
+                            title="Edit Product"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
                         <button
                           onClick={() => {
                             if (confirm(`Are you sure you want to delete ${prod.name}?`)) {
@@ -1029,7 +1050,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     )}
                   </div>
                 </div>
-              ))}
+              );
+            })}
             </div>
           </div>
         )}
@@ -1690,8 +1712,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <label className="block font-bold mb-1">Category *</label>
                   <select
                     value={editingProduct.category}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, category: e.target.value as Category })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none bg-white"
+                    onChange={(e) => {
+                      const newCat = e.target.value as Category;
+                      if (isCreatingNewProduct) {
+                        const newSku = generateNextSku(newCat, products);
+                        setEditingProduct({ ...editingProduct, category: newCat, sku: newSku });
+                      } else {
+                        setEditingProduct({ ...editingProduct, category: newCat });
+                      }
+                    }}
+                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none bg-white font-medium"
                   >
                     <option value="Fashion">Fashion</option>
                     <option value="Accessories">Accessories</option>
@@ -1705,11 +1735,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
 
                 <div>
-                  <label className="block font-bold mb-1">SKU (Auto or Custom)</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-bold">SKU (Auto or Custom)</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newSku = generateNextSku(editingProduct.category, products);
+                        setEditingProduct({ ...editingProduct, sku: newSku });
+                      }}
+                      className="text-[10px] text-[#C9A44C] hover:text-amber-800 font-bold hover:underline"
+                    >
+                      Auto-generate ({getCategorySkuPrefix(editingProduct.category)})
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={editingProduct.sku}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value.trim() })}
+                    placeholder={`e.g. YM-${getCategorySkuPrefix(editingProduct.category)}-001`}
                     className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none font-mono"
                   />
                 </div>
@@ -1758,20 +1801,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="block font-bold mb-1">Main Image URL</label>
-                  <input
-                    type="text"
-                    value={editingProduct.mainImage}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setEditingProduct({
-                        ...editingProduct,
-                        mainImage: val,
-                        images: [val, ...(editingProduct.images.slice(1))],
-                      });
-                    }}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-bold">Main Image URL</label>
+                    {isGoogleDriveUrl(editingProduct.mainImage) && (
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                        ✓ Google Drive link auto-converted to high-speed CDN image
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-3 items-center">
+                    <div className="w-14 h-14 rounded-xl border border-neutral-300 bg-white p-1 shrink-0 overflow-hidden flex items-center justify-center">
+                      <img
+                        src={normalizeProductImageUrl(editingProduct.mainImage) || IMAGE_FALLBACK_SVG}
+                        alt="Preview"
+                        onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={editingProduct.mainImage}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditingProduct({
+                          ...editingProduct,
+                          mainImage: val,
+                          images: [val, ...(editingProduct.images.slice(1))],
+                        });
+                      }}
+                      placeholder="https://... or Google Drive file link"
+                      className="flex-1 p-2.5 rounded-xl border border-[#E7E5E0] outline-none font-mono text-xs"
+                    />
+                  </div>
                 </div>
 
                 {/* Multiple Images Reordering */}
@@ -1780,7 +1841,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   {editingProduct.images.map((img, idx) => (
                     <div key={idx} className="flex items-center gap-2">
                       {img && img.trim() ? (
-                        <img src={img} alt="" className="w-8 h-8 rounded object-contain bg-neutral-100 border shrink-0" />
+                        <img
+                          src={normalizeProductImageUrl(img) || IMAGE_FALLBACK_SVG}
+                          alt=""
+                          onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
+                          className="w-8 h-8 rounded object-contain bg-neutral-100 border shrink-0"
+                        />
                       ) : (
                         <div className="w-8 h-8 rounded bg-neutral-100 border shrink-0 flex items-center justify-center text-xs text-neutral-400">🖼️</div>
                       )}

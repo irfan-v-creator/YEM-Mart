@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Product, Category, StoreSettings } from '../types';
 import { formatCurrency } from '../utils/formatters';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
 interface HeaderProps {
   settings: StoreSettings;
@@ -173,8 +174,9 @@ export const Header: React.FC<HeaderProps> = ({
                     >
                       {prod.mainImage && prod.mainImage.trim() ? (
                         <img
-                          src={prod.mainImage}
+                          src={normalizeProductImageUrl(prod.mainImage) || IMAGE_FALLBACK_SVG}
                           alt={prod.name}
+                          onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
                           className="w-10 h-10 object-contain rounded bg-[#F7F6F2] p-1 border border-neutral-100 shrink-0"
                         />
                       ) : (

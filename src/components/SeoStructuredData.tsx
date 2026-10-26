@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Product, StoreSettings, Category } from '../types';
 import { updateDynamicMetaTags, categoryToSlug } from '../utils/seo';
+import { normalizeProductImageUrl } from '../utils/imageUrl';
 
 interface SeoStructuredDataProps {
   settings: StoreSettings;
@@ -19,7 +20,7 @@ export const SeoStructuredData: React.FC<SeoStructuredDataProps> = ({
     if (activeProduct) {
       // 1. Dynamic Product Meta Tags & Social Cards
       const productUrl = `${origin}/product/${activeProduct.id}`;
-      const productImage = activeProduct.mainImage || activeProduct.images[0] || '';
+      const productImage = normalizeProductImageUrl(activeProduct.mainImage || activeProduct.images[0] || '');
       const productPriceFormatted = `₹${activeProduct.price.toLocaleString('en-IN')}`;
       
       updateDynamicMetaTags({

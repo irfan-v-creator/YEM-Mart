@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Heart, ShoppingBag, Trash2, ArrowRight, Package } from 'lucide-react';
 import { Product } from '../types';
 import { formatCurrency } from '../utils/formatters';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
 interface WishlistDrawerProps {
   isOpen: boolean;
@@ -70,8 +71,9 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
               <div key={prod.id} className="py-4 first:pt-0 last:pb-0 flex gap-4">
                 {prod.mainImage && prod.mainImage.trim() ? (
                   <img
-                    src={prod.mainImage}
+                    src={normalizeProductImageUrl(prod.mainImage) || IMAGE_FALLBACK_SVG}
                     alt={prod.name}
+                    onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
                     onClick={() => {
                       onOpenProduct(prod);
                       onClose();

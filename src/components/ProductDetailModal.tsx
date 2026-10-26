@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Product, ProductVariant, CartItem } from '../types';
 import { formatCurrency } from '../utils/formatters';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -46,10 +47,12 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const [activeTab, setActiveTab] = useState<'overview' | 'specs' | 'delivery'>('overview');
   const [variantError, setVariantError] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
     if (product) {
-      setSelectedImage(product.mainImage || product.images[0]);
+      setSelectedImage(product.mainImage || (product.images && product.images[0]) || '');
+      setImageError(false);
       // If product has variants, set the first in-stock variant as default or none
       if (product.variants && product.variants.length > 0) {
         const firstAvailable = product.variants.find(v => v.stock > 0) || product.variants[0];
@@ -138,19 +141,22 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
         <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Gallery Section */}
           <div className="flex flex-col gap-4">
-            {/* Main Image with contain behavior */}
+            {/* Main Image with contain behavior in 1:1 aspect ratio */}
             <div className="w-full aspect-square bg-[#F7F6F2] rounded-2xl p-6 flex items-center justify-center border border-[#E7E5E0] relative overflow-hidden">
-              {selectedImage && selectedImage.trim() ? (
-                <img
-                  src={selectedImage}
-                  alt={product.name}
-                  className={`max-h-full max-w-full object-contain transition-all duration-300 ${
-                    isOutOfStock ? 'opacity-50 grayscale' : ''
-                  }`}
-                />
-              ) : (
-                <Package className="w-16 h-16 text-neutral-300" />
-              )}
+              {(() => {
+                const normalizedSelected = normalizeProductImageUrl(selectedImage);
+                const displaySelected = imageError || !normalizedSelected ? IMAGE_FALLBACK_SVG : normalizedSelected;
+                return (
+                  <img
+                    src={displaySelected}
+                    alt={product.name}
+                    onError={() => setImageError(true)}
+                    className={`max-h-full max-w-full object-contain transition-all duration-300 ${
+                      isOutOfStock ? 'opacity-50 grayscale' : ''
+                    }`}
+                  />
+                );
+              })()}
 
               {product.discountPercent && product.discountPercent > 0 && (
                 <span className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-[#171717] text-[#C9A44C] text-xs font-extrabold uppercase">
@@ -173,18 +179,24 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 {product.images.map((img, idx) => (
                   <button
                     key={idx}
-                    onClick={() => setSelectedImage(img)}
+                    onClick={() => {
+                      setSelectedImage(img);
+                      setImageError(false);
+                    }}
                     className={`w-16 h-16 rounded-xl bg-[#F7F6F2] p-1.5 border-2 transition-all shrink-0 ${
                       selectedImage === img
                         ? 'border-[#C9A44C] ring-2 ring-[#C9A44C]/30'
                         : 'border-[#E7E5E0] hover:border-neutral-400'
                     }`}
                   >
-                    {img && img.trim() ? (
-                      <img src={img} alt="" className="w-full h-full object-contain" />
-                    ) : (
-                      <Package className="w-6 h-6 text-neutral-300" />
-                    )}
+                    <img
+                      src={normalizeProductImageUrl(img) || IMAGE_FALLBACK_SVG}
+                      alt=""
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG;
+                      }}
+                      className="w-full h-full object-contain"
+                    />
                   </button>
                 ))}
               </div>
@@ -221,24 +233,28 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               {/* SKU & Brand */}
               <div className="flex items-center gap-3 mt-1.5 text-xs text-neutral-400 font-medium">
                 <span>SKU: {currentSku}</span>
-                <span>•</span>
-                <span>Brand: <strong className="text-neutral-700">{product.brand}</strong></span>
+                {product.brand && product.brand.trim() ? (
+                  <>
+                    <span>•</span>
+                    <span>Brand: <strong className="text-neutral-700">{product.brand}</strong></span>
+                  </>
+                ) : null}
               </div>
 
               {/* Genuine Rating */}
-              {product.rating && (
+              {product.rating !== undefined && product.rating > 0 ? (
                 <div className="flex items-center gap-2 mt-3">
                   <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 font-bold text-xs border border-emerald-200">
                     <Star className="w-3.5 h-3.5 fill-emerald-700 text-emerald-700" />
                     <span>{product.rating.toFixed(1)}</span>
                   </div>
-                  {product.reviewCount && (
+                  {product.reviewCount !== undefined && product.reviewCount > 0 ? (
                     <span className="text-xs text-neutral-500">
-                      Based on {product.reviewCount} verified purchases
+                      Based on {product.reviewCount} verified {product.reviewCount === 1 ? 'purchase' : 'purchases'}
                     </span>
-                  )}
+                  ) : null}
                 </div>
-              )}
+              ) : null}
 
               {/* Price Display */}
               <div className="mt-4 p-4 rounded-2xl bg-[#F7F6F2] border border-[#E7E5E0] flex items-baseline justify-between">
@@ -361,28 +377,30 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               )}
 
               {/* Highlights Bullet Points */}
-              <div className="mt-6 border-t border-[#E7E5E0] pt-4">
-                <h3 className="text-xs font-bold text-neutral-700 uppercase tracking-wider mb-2">
-                  Key Highlights
-                </h3>
-                <ul className="space-y-1.5 text-xs text-neutral-600">
-                  {product.highlights.map((h, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                      <span>{h}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              {Array.isArray(product.highlights) && product.highlights.filter(h => Boolean(h && h.trim())).length > 0 && (
+                <div className="mt-6 border-t border-[#E7E5E0] pt-4">
+                  <h3 className="text-xs font-bold text-neutral-700 uppercase tracking-wider mb-2">
+                    Key Highlights
+                  </h3>
+                  <ul className="space-y-1.5 text-xs text-neutral-600">
+                    {product.highlights.filter(h => Boolean(h && h.trim())).map((h, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                        <span>{h}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Specifications Table */}
-              {product.specs && Object.keys(product.specs).length > 0 && (
+              {product.specs && Object.keys(product.specs).length > 0 && Object.values(product.specs).some(v => Boolean(v && String(v).trim())) && (
                 <div className="mt-4 border-t border-[#E7E5E0] pt-4">
                   <h3 className="text-xs font-bold text-neutral-700 uppercase tracking-wider mb-2">
                     Specifications
                   </h3>
                   <div className="bg-[#F7F6F2] rounded-xl p-3 divide-y divide-[#E7E5E0] text-xs">
-                    {Object.entries(product.specs).map(([k, v]) => (
+                    {Object.entries(product.specs).filter(([_, v]) => Boolean(v && String(v).trim())).map(([k, v]) => (
                       <div key={k} className="py-1.5 flex justify-between gap-4">
                         <span className="text-neutral-500 font-medium">{k}</span>
                         <span className="text-[#171717] font-semibold text-right">{v}</span>

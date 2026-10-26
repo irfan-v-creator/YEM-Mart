@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { CartItem, StoreSettings, Coupon } from '../types';
 import { formatCurrency } from '../utils/formatters';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -153,8 +154,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   {/* Thumbnail */}
                   {item.product.mainImage && item.product.mainImage.trim() ? (
                     <img
-                      src={item.product.mainImage}
+                      src={normalizeProductImageUrl(item.product.mainImage) || IMAGE_FALLBACK_SVG}
                       alt={item.product.name}
+                      onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
                       className="w-20 h-20 rounded-xl object-contain bg-[#F7F6F2] p-1.5 border border-[#E7E5E0] shrink-0"
                     />
                   ) : (

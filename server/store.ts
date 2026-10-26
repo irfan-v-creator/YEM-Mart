@@ -23,6 +23,8 @@ import {
   INITIAL_STOCK_LOGS 
 } from '../src/data/initialData.js';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase.js';
+import { normalizeProductImageUrl } from '../src/utils/imageUrl.js';
+import { generateNextSku, getCategorySkuPrefix } from '../src/utils/sku.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -486,8 +488,24 @@ class Store {
   }
 
   // --- PRODUCTS ---
+  public normalizeProduct(p: Product): Product {
+    const mainImage = normalizeProductImageUrl(p.mainImage);
+    const images = Array.isArray(p.images) && p.images.length > 0
+      ? p.images.map(img => normalizeProductImageUrl(img)).filter(Boolean)
+      : [mainImage].filter(Boolean);
+    return {
+      ...p,
+      mainImage: mainImage || (images[0] ?? ''),
+      images: images.length > 0 ? images : [mainImage].filter(Boolean),
+    };
+  }
+
+  public generateNextSku(category: string): string {
+    return generateNextSku(category, this.data.products);
+  }
+
   public getProducts(options?: { category?: string; status?: string; search?: string; isAdmin?: boolean }): Product[] {
-    let result = [...this.data.products];
+    let result = this.data.products.map(p => this.normalizeProduct(p));
     if (!options?.isAdmin) {
       // Public customer store only sees published products
       result = result.filter(p => p.status === 'published');
@@ -502,9 +520,9 @@ class Store {
       const q = options.search.toLowerCase();
       result = result.filter(p => 
         p.name.toLowerCase().includes(q) || 
-        p.brand.toLowerCase().includes(q) ||
+        p.brand?.toLowerCase().includes(q) ||
         p.category.toLowerCase().includes(q) ||
-        p.tags.some(t => t.toLowerCase().includes(q))
+        (p.tags && p.tags.some(t => t.toLowerCase().includes(q)))
       );
     }
     return result;
@@ -513,7 +531,8 @@ class Store {
   public getProductById(id: string): Product | undefined {
     if (!id) return undefined;
     const clean = id.trim().toLowerCase();
-    return this.data.products.find(p => p.id.toLowerCase() === clean || (p.sku && p.sku.toLowerCase() === clean));
+    const found = this.data.products.find(p => p.id.toLowerCase() === clean || (p.sku && p.sku.toLowerCase() === clean));
+    return found ? this.normalizeProduct(found) : undefined;
   }
 
   public async saveProduct(product: Partial<Product> & { id: string }, actor = 'Admin'): Promise<{ success: boolean; product?: Product; error?: string }> {
@@ -528,45 +547,64 @@ class Store {
       return { success: false, error: 'Valid price is required.' };
     }
 
+    const existingIdx = this.data.products.findIndex(p => p.id === product.id);
+    const existing = existingIdx >= 0 ? this.data.products[existingIdx] : undefined;
+
+    // Determine and validate SKU
+    let finalSku = product.sku?.trim();
+    if (finalSku) {
+      // Check for SKU conflict with other products
+      const conflict = this.data.products.find(p => p.id !== product.id && p.sku?.trim().toUpperCase() === finalSku!.toUpperCase());
+      if (conflict) {
+        return { success: false, error: `SKU "${finalSku}" is already in use by product "${conflict.name}". Please provide a unique SKU.` };
+      }
+    } else if (existing?.sku) {
+      // Preserve existing SKU on edit if omitted
+      finalSku = existing.sku;
+    } else {
+      // Auto-generate sequential category-prefixed SKU
+      finalSku = this.generateNextSku(product.category);
+    }
+
     // Publication check: Incomplete product cannot be published
-    const isIncomplete = !product.mainImage || product.price <= 0 || !product.sku;
+    const normalizedMain = normalizeProductImageUrl(product.mainImage || (product.images && product.images[0]) || existing?.mainImage || '');
+    const isIncomplete = !normalizedMain || product.price <= 0 || !finalSku;
     if (product.status === 'published' && isIncomplete) {
       return { success: false, error: 'Incomplete product cannot be published. Please provide image, SKU, and price.' };
     }
 
-    const existingIdx = this.data.products.findIndex(p => p.id === product.id);
-    const existing = existingIdx >= 0 ? this.data.products[existingIdx] : undefined;
-
-    // Auto-generate SKU if missing
-    const sku = product.sku?.trim() || existing?.sku || `YM-${product.category.slice(0, 3).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
+    const rawImages = product.images && product.images.length > 0
+      ? product.images
+      : [normalizedMain];
+    const normalizedImages = rawImages.map(img => normalizeProductImageUrl(img)).filter(Boolean);
 
     const fullProduct: Product = {
       id: product.id,
       name: product.name.trim(),
-      brand: product.brand?.trim() || 'YEM MART',
+      brand: product.brand?.trim() || existing?.brand || 'YEM MART',
       category: product.category,
-      description: product.description || '',
-      shortSummary: product.shortSummary || product.description?.slice(0, 100) || '',
-      highlights: product.highlights || ['100% Genuine Quality Guarantee'],
-      specs: product.specs || {},
+      description: product.description ?? existing?.description ?? '',
+      shortSummary: product.shortSummary ?? existing?.shortSummary ?? product.description?.slice(0, 100) ?? '',
+      highlights: product.highlights && product.highlights.length > 0 ? product.highlights : (existing?.highlights ?? []),
+      specs: product.specs ?? existing?.specs ?? {},
       price: Number(product.price),
-      originalPrice: product.originalPrice ? Number(product.originalPrice) : undefined,
-      discountPercent: product.discountPercent,
-      rating: product.rating || 4.8,
-      reviewCount: product.reviewCount || 1,
-      images: product.images && product.images.length > 0 ? product.images : [product.mainImage || ''],
-      mainImage: product.mainImage || (product.images && product.images[0]) || '',
-      status: product.status || 'published',
-      scheduledPublishDate: product.scheduledPublishDate,
-      stock: Number(product.stock ?? 10),
-      lowStockThreshold: Number(product.lowStockThreshold ?? 4),
-      isFeatured: Boolean(product.isFeatured),
-      isBestDeal: Boolean(product.isBestDeal),
-      isNewArrival: Boolean(product.isNewArrival),
-      variants: product.variants || [],
-      requiredVariantType: product.requiredVariantType,
-      sku,
-      tags: product.tags || [],
+      originalPrice: product.originalPrice !== undefined && product.originalPrice !== null ? Number(product.originalPrice) : existing?.originalPrice,
+      discountPercent: product.discountPercent !== undefined ? product.discountPercent : existing?.discountPercent,
+      rating: product.rating !== undefined ? Number(product.rating) : existing?.rating,
+      reviewCount: product.reviewCount !== undefined ? Number(product.reviewCount) : existing?.reviewCount,
+      images: normalizedImages.length > 0 ? normalizedImages : [normalizedMain].filter(Boolean),
+      mainImage: normalizedMain,
+      status: product.status || existing?.status || 'published',
+      scheduledPublishDate: product.scheduledPublishDate ?? existing?.scheduledPublishDate,
+      stock: Number(product.stock ?? existing?.stock ?? 10),
+      lowStockThreshold: Number(product.lowStockThreshold ?? existing?.lowStockThreshold ?? 4),
+      isFeatured: product.isFeatured !== undefined ? Boolean(product.isFeatured) : Boolean(existing?.isFeatured),
+      isBestDeal: product.isBestDeal !== undefined ? Boolean(product.isBestDeal) : Boolean(existing?.isBestDeal),
+      isNewArrival: product.isNewArrival !== undefined ? Boolean(product.isNewArrival) : Boolean(existing?.isNewArrival),
+      variants: product.variants ?? existing?.variants ?? [],
+      requiredVariantType: product.requiredVariantType ?? existing?.requiredVariantType,
+      sku: finalSku,
+      tags: product.tags ?? existing?.tags ?? [],
     };
 
     if (existingIdx >= 0) {

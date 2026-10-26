@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Heart, Star, ShoppingBag, Eye, AlertCircle, Package } from 'lucide-react';
 import { Product } from '../types';
 import { formatCurrency } from '../utils/formatters';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
 interface ProductCardProps {
   product: Product;
@@ -23,6 +24,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const isOutOfStock = product.stock <= 0;
   const isLowStock = !isOutOfStock && product.stock <= (product.lowStockThreshold || lowStockThreshold);
   const hasVariants = product.variants && product.variants.length > 0;
+  const [imageError, setImageError] = useState(false);
+
+  const normalizedImage = normalizeProductImageUrl(product.mainImage);
+  const displayImage = imageError || !normalizedImage ? IMAGE_FALLBACK_SVG : normalizedImage;
 
   return (
     <div className="group bg-white rounded-2xl border border-[#E7E5E0] hover:border-neutral-400 hover:shadow-md transition-all flex flex-col overflow-hidden relative">
@@ -71,10 +76,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         onClick={() => onOpenProduct(product)}
         className="w-full aspect-square bg-[#F7F6F2] relative cursor-pointer overflow-hidden p-4 flex items-center justify-center border-b border-neutral-100"
       >
-        {product.mainImage && product.mainImage.trim() ? (
+        {displayImage ? (
           <img
-            src={product.mainImage}
+            src={displayImage}
             alt={product.name}
+            onError={() => setImageError(true)}
             className={`max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-105 ${
               isOutOfStock ? 'opacity-50 grayscale' : ''
             }`}
@@ -104,8 +110,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         <div>
           {/* Brand & Category */}
           <div className="flex items-center justify-between text-xs text-neutral-400 font-medium mb-1">
-            <span className="truncate max-w-[60%]">{product.brand}</span>
-            <span className="text-[11px] text-neutral-500">{product.category}</span>
+            {product.brand && product.brand.trim() ? (
+              <span className="truncate max-w-[60%]">{product.brand}</span>
+            ) : null}
+            <span className="text-[11px] text-neutral-500 ml-auto">{product.category}</span>
           </div>
 
           {/* Product Name */}
@@ -118,13 +126,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </h3>
 
           {/* Genuine Rating */}
-          {product.rating && (
+          {product.rating !== undefined && product.rating > 0 && (
             <div className="flex items-center gap-1.5 mt-1.5 text-xs">
               <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 font-bold text-[11px] border border-emerald-200">
                 <Star className="w-3 h-3 fill-emerald-700 text-emerald-700" />
                 <span>{product.rating.toFixed(1)}</span>
               </div>
-              {product.reviewCount && (
+              {product.reviewCount !== undefined && product.reviewCount > 0 && (
                 <span className="text-neutral-400 text-[10px] sm:text-[11px]">({product.reviewCount})</span>
               )}
             </div>

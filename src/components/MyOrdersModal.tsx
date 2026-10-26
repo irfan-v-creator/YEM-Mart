@@ -33,6 +33,7 @@ import {
 } from '../utils/formatters';
 import { generateOrderPdfInvoice } from '../utils/pdfInvoice';
 import { api } from '../utils/api';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
 interface MyOrdersModalProps {
   isOpen: boolean;
@@ -392,8 +393,9 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({
                               >
                                 {item.image && item.image.trim() ? (
                                   <img
-                                    src={item.image}
+                                    src={normalizeProductImageUrl(item.image) || IMAGE_FALLBACK_SVG}
                                     alt={item.productName}
+                                    onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
                                     className="max-h-full max-w-full object-contain"
                                   />
                                 ) : (

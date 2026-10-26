@@ -18,6 +18,7 @@ import {
 import { Order, OrderStatus } from '../types';
 import { formatCurrency, formatDate, maskPhone, maskName } from '../utils/formatters';
 import { api } from '../utils/api';
+import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
 interface OrderTrackingModalProps {
   isOpen: boolean;
@@ -390,7 +391,12 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                   <div key={idx} className="flex items-center justify-between text-xs py-1.5 border-b border-[#F7F6F2]">
                     <div className="flex items-center gap-2">
                       {it.image && it.image.trim() ? (
-                        <img src={it.image} alt={it.productName || 'Order item'} className="w-8 h-8 rounded object-contain bg-[#F7F6F2] p-0.5 border" />
+                        <img
+                          src={normalizeProductImageUrl(it.image) || IMAGE_FALLBACK_SVG}
+                          alt={it.productName || 'Order item'}
+                          onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
+                          className="w-8 h-8 rounded object-contain bg-[#F7F6F2] p-0.5 border"
+                        />
                       ) : (
                         <Package className="w-8 h-8 text-neutral-400 p-1 bg-[#F7F6F2] rounded border shrink-0" />
                       )}

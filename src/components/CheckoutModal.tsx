@@ -23,6 +23,7 @@ import {
 } from '../utils/formatters';
 import { ALL_KERALA_DISTRICTS, lookupKeralaDistrict, isKeralaPincode, KeralaDistrict } from '../data/initialData';
 import { api } from '../utils/api';
+import { normalizeProductImageUrl } from '../utils/imageUrl';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -168,7 +169,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           quantity: i.quantity,
           unitPrice: i.price,
           totalPrice: i.price * i.quantity,
-          image: i.product?.mainImage || '',
+          image: normalizeProductImageUrl(i.product?.mainImage) || '',
         })),
         subtotal,
         deliveryFee,

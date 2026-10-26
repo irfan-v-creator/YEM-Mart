@@ -794,6 +794,12 @@ app.get('/api/products', async (req, res) => {
   res.json(list);
 });
 
+app.get('/api/products/generate-sku', (req, res) => {
+  const category = (req.query.category as string) || 'Fashion';
+  const sku = store.generateNextSku(category);
+  res.json({ category, sku });
+});
+
 app.get('/api/products/:id', async (req, res) => {
   const product = store.getProductById(req.params.id);
   if (!product) return res.status(404).json({ error: 'Product not found' });
