@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   CheckCircle2, 
@@ -12,7 +12,8 @@ import {
   MessageSquare,
   Lock,
   ArrowLeft,
-  Info
+  Info,
+  RefreshCw
 } from 'lucide-react';
 import { CartItem, CustomerDetails, Order, StoreSettings } from '../types';
 import { 
@@ -60,6 +61,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [orderNotes, setOrderNotes] = useState('');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const clientOrderIdRef = useRef<string | null>(null);
 
   // Snapshot of items at checkout initiation so that onClearCart() does not wipe WhatsApp items
   const [checkoutItemsSnapshot, setCheckoutItemsSnapshot] = useState<CartItem[]>(items);
@@ -126,6 +129,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     // Freeze snapshot before any clear operations occur
     setCheckoutItemsSnapshot(itemsToSubmit);
     setIsSubmittingOrder(true);
+    setSubmissionError(null);
+
+    // Maintain stable clientOrderId across retries of the same submission attempt
+    if (!clientOrderIdRef.current) {
+      clientOrderIdRef.current = 'CO-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 7);
+    }
 
     const customer: CustomerDetails = {
       fullName: fullName.trim(),
@@ -138,7 +147,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     };
 
     try {
-      // 1. First attempt trusted server-side order creation & persistent saving
+      // Authoritative server-side order creation & persistent Supabase save
       const serverOrder = await api.createOrder(
         customer,
         itemsToSubmit.map(i => ({
@@ -146,52 +155,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           variantSku: i.variant?.sku,
           quantity: i.quantity,
         })),
-        couponCode
+        couponCode,
+        clientOrderIdRef.current
       );
 
+      // Order successfully persisted in database
+      clientOrderIdRef.current = null;
       setCreatedOrder(serverOrder);
       onOrderCreated(serverOrder);
       onClearCart();
       setStep('whatsapp');
     } catch (err: any) {
-      console.warn('Backend order creation error, using local fallback:', err);
-      // Client-side fallback if network offline
-      const newOrderId = generateOrderId();
-      const fallbackOrder: Order = {
-        id: newOrderId,
-        createdAt: new Date().toISOString(),
-        customer,
-        items: itemsToSubmit.map((i) => ({
-          productId: i.productId,
-          productName: i.product?.name || 'Selected Item',
-          variantName: i.variant?.name,
-          variantSku: i.variant?.sku || i.product?.sku,
-          quantity: i.quantity,
-          unitPrice: i.price,
-          totalPrice: i.price * i.quantity,
-          image: normalizeProductImageUrl(i.product?.mainImage) || '',
-        })),
-        subtotal,
-        deliveryFee,
-        discountAmount: couponDiscount,
-        couponCode,
-        grandTotal,
-        status: 'whatsapp_pending',
-        paymentStatus: 'pending',
-        isRestockedOnCancellation: false,
-        statusTimeline: [
-          {
-            status: 'prepared',
-            timestamp: new Date().toISOString(),
-            note: 'Order ID generated on website. Awaiting manual WhatsApp dispatch by customer.',
-          },
-        ],
-      };
-
-      setCreatedOrder(fallbackOrder);
-      onOrderCreated(fallbackOrder);
-      onClearCart();
-      setStep('whatsapp');
+      console.error('Order creation error:', err);
+      const msg = err?.message || 'Unable to place order right now. Your cart is preserved. Please retry.';
+      setSubmissionError(msg);
     } finally {
       setIsSubmittingOrder(false);
     }
@@ -443,12 +420,33 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
             </div>
 
+            {submissionError && (
+              <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3.5 flex items-start gap-3 text-xs">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <p className="font-semibold text-red-900">Order Submission Failed</p>
+                  <p className="text-red-700">{submissionError}</p>
+                  <p className="text-[11px] text-red-600">Your cart and address are intact. Click below to retry.</p>
+                </div>
+              </div>
+            )}
+
             <button
               onClick={handleProceedToReview}
-              className="w-full py-3.5 rounded-xl bg-[#171717] text-white font-bold text-sm hover:bg-[#C9A44C] hover:text-[#171717] transition-all flex items-center justify-center gap-2 shadow-md active:scale-98"
+              disabled={isSubmittingOrder}
+              className="w-full py-3.5 rounded-xl bg-[#171717] text-white font-bold text-sm hover:bg-[#C9A44C] hover:text-[#171717] transition-all flex items-center justify-center gap-2 shadow-md active:scale-98 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <span>Create Order ID & Prepare WhatsApp Message</span>
-              <ArrowRight className="w-4 h-4" />
+              {isSubmittingOrder ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-[#C9A44C]" />
+                  <span>Saving Order & Verifying Inventory...</span>
+                </>
+              ) : (
+                <>
+                  <span>{submissionError ? 'Retry Placing Order' : 'Create Order ID & Prepare WhatsApp Message'}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
         )}

@@ -48,6 +48,9 @@ class Store {
   private data: DatabaseSchema;
   private isWriting = false;
   private lastHydratedAt = 0;
+  private lastOrdersHydratedAt = 0;
+  private hydrationPromise: Promise<boolean> | null = null;
+  private ordersHydrationPromise: Promise<boolean> | null = null;
 
   constructor() {
     this.ensureDataDirectory();
@@ -71,6 +74,10 @@ class Store {
 
   public getLastHydratedAt(): number {
     return this.lastHydratedAt;
+  }
+
+  public getLastOrdersHydratedAt(): number {
+    return this.lastOrdersHydratedAt;
   }
 
   private ensureDataDirectory(): boolean {
@@ -152,129 +159,183 @@ class Store {
     this.syncAuditLogToSupabase(log).catch(() => {});
   }
 
+  // Helper to map Supabase order row to strongly typed Order object
+  private mapSupabaseOrder(o: any): Order {
+    return {
+      id: o.id,
+      createdAt: o.created_at,
+      customer: o.customer || {
+        fullName: o.customer_name || 'Customer',
+        phone: o.phone || '',
+        address: o.address || '',
+        pincode: o.pincode || '',
+        district: o.city || 'Kerala',
+      },
+      items: Array.isArray(o.items) ? o.items : [],
+      subtotal: Number(o.subtotal || 0),
+      deliveryFee: Number(o.delivery_fee || 0),
+      discountAmount: Number(o.discount_amount || o.discount || 0),
+      couponCode: o.coupon_code || undefined,
+      grandTotal: Number(o.grand_total || o.total || 0),
+      status: o.status || o.order_status || 'prepared',
+      paymentStatus: o.payment_status || 'pending',
+      utrNumber: o.utr_number || undefined,
+      paymentSubmittedAt: o.payment_submitted_at || undefined,
+      cancellationReason: o.cancellation_reason || undefined,
+      cancelledAt: o.cancelled_at || undefined,
+      isRestockedOnCancellation: Boolean(o.is_restocked_on_cancellation),
+      statusTimeline: Array.isArray(o.status_timeline) ? o.status_timeline : [],
+    };
+  }
+
   // --- SUPABASE HYBRID REPOSITORY SYNC METHODS ---
-  public async hydrateFromSupabase(): Promise<boolean> {
+  // Fast on-demand order refresh strictly querying orders table
+  public async hydrateOrdersFromSupabase(force = false): Promise<boolean> {
     if (!isSupabaseConfigured()) return false;
+    // Don't re-query if hydrated within last 10 seconds unless forced
+    if (!force && Date.now() - this.lastOrdersHydratedAt < 10000 && this.data.orders.length > 0) {
+      return true;
+    }
+    if (this.ordersHydrationPromise) {
+      return this.ordersHydrationPromise;
+    }
+
     const supabase = getSupabaseClient();
     if (!supabase) return false;
 
-    try {
-      // 1. Settings
-      const { data: sRow, error: sErr } = await supabase
-        .from('store_settings')
-        .select('*')
-        .eq('id', 'default')
-        .maybeSingle();
+    this.ordersHydrationPromise = (async () => {
+      try {
+        const { data: oRows, error: oErr } = await supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false });
 
-      if (!sErr && sRow) {
-        this.data.settings = {
-          storeName: sRow.store_name || this.data.settings.storeName,
-          tagline: sRow.tagline || this.data.settings.tagline,
-          whatsappNumber: sRow.whatsapp_number || '917510447887',
-          supportPhone: sRow.support_phone || '7510447887',
-          upiId: sRow.upi_id || this.data.settings.upiId,
-          deliveryFee: Number(sRow.delivery_fee ?? this.data.settings.deliveryFee),
-          freeDeliveryThreshold: Number(sRow.free_delivery_threshold ?? this.data.settings.freeDeliveryThreshold),
-          lowStockThreshold: Number(sRow.low_stock_threshold ?? this.data.settings.lowStockThreshold),
-          announcementText: sRow.announcement_text || this.data.settings.announcementText,
-          coverageArea: sRow.coverage_area || this.data.settings.coverageArea,
-          officeCity: sRow.office_city || this.data.settings.officeCity,
-        };
+        if (!oErr && Array.isArray(oRows)) {
+          this.data.orders = oRows.map((o: any) => this.mapSupabaseOrder(o));
+          this.lastOrdersHydratedAt = Date.now();
+          this.saveDatabaseSync();
+          return true;
+        }
+        if (oErr) {
+          console.error('Supabase orders query error:', oErr);
+        }
+        return false;
+      } catch (err) {
+        console.error('Error hydrating orders from Supabase:', err);
+        return false;
+      } finally {
+        this.ordersHydrationPromise = null;
       }
+    })();
 
-      // 2. Products & Variants
-      const { data: pRows, error: pErr } = await supabase
-        .from('products')
-        .select('*')
-        .order('created_at', { ascending: false });
+    return this.ordersHydrationPromise;
+  }
 
-      if (!pErr && pRows && pRows.length > 0) {
-        this.data.products = pRows.map((r: any) => ({
-          id: r.id,
-          name: r.name,
-          brand: r.brand || 'YEM MART',
-          category: r.category,
-          shortSummary: r.short_summary || '',
-          description: r.description || '',
-          highlights: Array.isArray(r.highlights) ? r.highlights : [],
-          specs: r.specs && typeof r.specs === 'object' ? r.specs : {},
-          price: Number(r.price),
-          originalPrice: r.original_price ? Number(r.original_price) : (r.mrp ? Number(r.mrp) : undefined),
-          discountPercent: r.discount_percent !== undefined ? Number(r.discount_percent) : (r.discount_percentage ? Number(r.discount_percentage) : 0),
-          rating: r.rating ? Number(r.rating) : 4.5,
-          reviewCount: r.review_count ? Number(r.review_count) : 0,
-          images: Array.isArray(r.images) && r.images.length > 0 ? r.images : [r.main_image || ''],
-          mainImage: r.main_image || (r.images && r.images[0]) || '',
-          status: r.status || 'published',
-          scheduledPublishDate: r.scheduled_publish_date || undefined,
-          stock: Number(r.stock ?? r.stock_count ?? 0),
-          lowStockThreshold: Number(r.low_stock_threshold ?? 5),
-          isFeatured: Boolean(r.is_featured),
-          isBestDeal: Boolean(r.is_best_deal),
-          isNewArrival: Boolean(r.is_new_arrival),
-          requiredVariantType: r.required_variant_type || undefined,
-          sku: r.sku || '',
-          tags: Array.isArray(r.tags) ? r.tags : [],
-          variants: Array.isArray(r.variants) ? r.variants : [],
-        }));
-      }
-
-      // 3. Coupons
-      const { data: cRows, error: cErr } = await supabase.from('coupons').select('*');
-      if (!cErr && cRows && cRows.length > 0) {
-        this.data.coupons = cRows.map((c: any) => ({
-          id: c.id,
-          code: c.code,
-          description: c.description || '',
-          discountType: c.discount_type === 'percentage' ? 'percentage' : 'flat',
-          discountValue: Number(c.discount_value),
-          minPurchase: Number(c.min_purchase ?? c.min_order_amount ?? 0),
-          maxDiscount: c.max_discount ? Number(c.max_discount) : (c.max_discount_amount ? Number(c.max_discount_amount) : undefined),
-          startDate: c.start_date || c.valid_from || new Date().toISOString(),
-          endDate: c.end_date || c.valid_until || '2030-12-31T23:59:59Z',
-          usageLimit: c.usage_limit ? Number(c.usage_limit) : 9999,
-          usedCount: Number(c.used_count ?? c.times_used ?? 0),
-          isActive: Boolean(c.is_active),
-        }));
-      }
-
-      // 4. Orders
-      const { data: oRows, error: oErr } = await supabase.from('orders').select('*');
-      if (!oErr && oRows && oRows.length > 0) {
-        this.data.orders = oRows.map((o: any) => ({
-          id: o.id,
-          createdAt: o.created_at,
-          customer: o.customer || {
-            fullName: o.customer_name || 'Customer',
-            phone: o.phone || '',
-            address: o.address || '',
-            pincode: o.pincode || '',
-          },
-          items: Array.isArray(o.items) ? o.items : [],
-          subtotal: Number(o.subtotal || 0),
-          deliveryFee: Number(o.delivery_fee || 0),
-          discountAmount: Number(o.discount_amount || o.discount || 0),
-          couponCode: o.coupon_code || undefined,
-          grandTotal: Number(o.grand_total || o.total || 0),
-          status: o.status || o.order_status || 'prepared',
-          paymentStatus: o.payment_status || 'pending',
-          utrNumber: o.utr_number || undefined,
-          paymentSubmittedAt: o.payment_submitted_at || undefined,
-          cancellationReason: o.cancellation_reason || undefined,
-          cancelledAt: o.cancelled_at || undefined,
-          isRestockedOnCancellation: Boolean(o.is_restocked_on_cancellation),
-          statusTimeline: Array.isArray(o.status_timeline) ? o.status_timeline : [],
-          updatedAt: o.updated_at,
-        }));
-      }
-
-      this.lastHydratedAt = Date.now();
-      this.saveDatabaseSync();
-      return true;
-    } catch (err) {
-      console.error('Error during Supabase hydration:', err);
-      return false;
+  public async hydrateFromSupabase(): Promise<boolean> {
+    if (!isSupabaseConfigured()) return false;
+    // Deduplicate in-flight hydration requests to eliminate serverless storm
+    if (this.hydrationPromise) {
+      return this.hydrationPromise;
     }
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+
+    this.hydrationPromise = (async () => {
+      try {
+        // Execute all 4 queries in parallel to drastically improve loading performance
+        const [sRes, pRes, cRes, oRes] = await Promise.all([
+          supabase.from('store_settings').select('*').eq('id', 'default').maybeSingle(),
+          supabase.from('products').select('*').order('created_at', { ascending: false }),
+          supabase.from('coupons').select('*'),
+          supabase.from('orders').select('*').order('created_at', { ascending: false }),
+        ]);
+
+        // 1. Settings
+        if (!sRes.error && sRes.data) {
+          const sRow = sRes.data;
+          this.data.settings = {
+            storeName: sRow.store_name || this.data.settings.storeName,
+            tagline: sRow.tagline || this.data.settings.tagline,
+            whatsappNumber: sRow.whatsapp_number || '917510447887',
+            supportPhone: sRow.support_phone || '7510447887',
+            upiId: sRow.upi_id || this.data.settings.upiId,
+            deliveryFee: Number(sRow.delivery_fee ?? this.data.settings.deliveryFee),
+            freeDeliveryThreshold: Number(sRow.free_delivery_threshold ?? this.data.settings.freeDeliveryThreshold),
+            lowStockThreshold: Number(sRow.low_stock_threshold ?? this.data.settings.lowStockThreshold),
+            announcementText: sRow.announcement_text || this.data.settings.announcementText,
+            coverageArea: sRow.coverage_area || this.data.settings.coverageArea,
+            officeCity: sRow.office_city || this.data.settings.officeCity,
+          };
+        }
+
+        // 2. Products & Variants
+        if (!pRes.error && Array.isArray(pRes.data) && pRes.data.length > 0) {
+          this.data.products = pRes.data.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            brand: r.brand || 'YEM MART',
+            category: r.category,
+            shortSummary: r.short_summary || '',
+            description: r.description || '',
+            highlights: Array.isArray(r.highlights) ? r.highlights : [],
+            specs: r.specs && typeof r.specs === 'object' ? r.specs : {},
+            price: Number(r.price),
+            originalPrice: r.original_price ? Number(r.original_price) : (r.mrp ? Number(r.mrp) : undefined),
+            discountPercent: r.discount_percent !== undefined ? Number(r.discount_percent) : (r.discount_percentage ? Number(r.discount_percentage) : 0),
+            rating: r.rating ? Number(r.rating) : 4.5,
+            reviewCount: r.review_count ? Number(r.review_count) : 0,
+            images: Array.isArray(r.images) && r.images.length > 0 ? r.images : [r.main_image || ''],
+            mainImage: r.main_image || (r.images && r.images[0]) || '',
+            status: r.status || 'published',
+            scheduledPublishDate: r.scheduled_publish_date || undefined,
+            stock: Number(r.stock ?? r.stock_count ?? 0),
+            lowStockThreshold: Number(r.low_stock_threshold ?? 5),
+            isFeatured: Boolean(r.is_featured),
+            isBestDeal: Boolean(r.is_best_deal),
+            isNewArrival: Boolean(r.is_new_arrival),
+            requiredVariantType: r.required_variant_type || undefined,
+            sku: r.sku || '',
+            tags: Array.isArray(r.tags) ? r.tags : [],
+            variants: Array.isArray(r.variants) ? r.variants : [],
+          }));
+        }
+
+        // 3. Coupons
+        if (!cRes.error && Array.isArray(cRes.data) && cRes.data.length > 0) {
+          this.data.coupons = cRes.data.map((c: any) => ({
+            id: c.id,
+            code: c.code,
+            description: c.description || '',
+            discountType: c.discount_type === 'percentage' ? 'percentage' : 'flat',
+            discountValue: Number(c.discount_value),
+            minPurchase: Number(c.min_purchase ?? c.min_order_amount ?? 0),
+            maxDiscount: c.max_discount ? Number(c.max_discount) : (c.max_discount_amount ? Number(c.max_discount_amount) : undefined),
+            startDate: c.start_date || c.valid_from || new Date().toISOString(),
+            endDate: c.end_date || c.valid_until || '2030-12-31T23:59:59Z',
+            usageLimit: c.usage_limit ? Number(c.usage_limit) : 9999,
+            usedCount: Number(c.used_count ?? c.times_used ?? 0),
+            isActive: Boolean(c.is_active),
+          }));
+        }
+
+        // 4. Orders
+        if (!oRes.error && Array.isArray(oRes.data) && oRes.data.length > 0) {
+          this.data.orders = oRes.data.map((o: any) => this.mapSupabaseOrder(o));
+          this.lastOrdersHydratedAt = Date.now();
+        }
+
+        this.lastHydratedAt = Date.now();
+        this.saveDatabaseSync();
+        return true;
+      } catch (err) {
+        console.error('Error during parallel Supabase hydration:', err);
+        return false;
+      } finally {
+        this.hydrationPromise = null;
+      }
+    })();
+
+    return this.hydrationPromise;
   }
 
   private async syncProductToSupabase(p: Product) {
@@ -352,12 +413,12 @@ class Store {
     }
   }
 
-  private async syncOrderToSupabase(o: Order) {
-    if (!isSupabaseConfigured()) return;
+  public async syncOrderToSupabase(o: Order): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) return { success: true };
     const supabase = getSupabaseClient();
-    if (!supabase) return;
+    if (!supabase) return { success: false, error: 'Database client unavailable' };
     try {
-      await supabase.from('orders').upsert({
+      const { error } = await supabase.from('orders').upsert({
         id: o.id,
         created_at: o.createdAt || new Date().toISOString(),
         customer: o.customer,
@@ -377,8 +438,14 @@ class Store {
         status_timeline: o.statusTimeline || [],
         updated_at: new Date().toISOString(),
       });
-    } catch (err) {
+      if (error) {
+        console.error(`Failed to sync order ${o.id} to Supabase:`, error);
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
       console.error(`Failed to sync order ${o.id} to Supabase:`, err);
+      return { success: false, error: err?.message || 'Database connection error' };
     }
   }
 
@@ -880,7 +947,12 @@ class Store {
     return this.data.orders.find(o => o.id === id);
   }
 
-  public createOrder(customer: CustomerDetails, items: Array<{ productId: string; variantSku?: string; quantity: number }>, couponCode?: string): { success: boolean; order?: Order; error?: string } {
+  public async createOrder(
+    customer: CustomerDetails, 
+    items: Array<{ productId: string; variantSku?: string; quantity: number }>, 
+    couponCode?: string,
+    clientOrderId?: string
+  ): Promise<{ success: boolean; order?: Order; error?: string }> {
     // 1. Server-side customer input validation
     if (!customer || typeof customer !== 'object') {
       return { success: false, error: 'Customer details are required.' };
@@ -913,7 +985,24 @@ class Store {
       return { success: false, error: validation.errors.join(' ') };
     }
 
-    // 3. Concurrency-safe stock deduction
+    // 3. Duplicate-submission protection (idempotency check)
+    if (clientOrderId && clientOrderId.trim()) {
+      const existingById = this.data.orders.find(o => o.id === clientOrderId.trim());
+      if (existingById) {
+        return { success: true, order: existingById };
+      }
+    }
+    // Prevent duplicate orders placed within 45 seconds for same customer & grand total
+    const recentDuplicate = this.data.orders.find(o => 
+      o.customer?.phone === phone &&
+      o.grandTotal === validation.grandTotal &&
+      (Date.now() - new Date(o.createdAt).getTime()) < 45000
+    );
+    if (recentDuplicate) {
+      return { success: true, order: recentDuplicate };
+    }
+
+    // 4. Concurrency-safe stock deduction
     for (const line of validation.validatedItems) {
       const prod = this.data.products.find(p => p.id === line.product.id);
       if (!prod) continue;
@@ -942,16 +1031,16 @@ class Store {
       });
     }
 
-    // 4. Increment coupon usage
+    // 5. Increment coupon usage
     if (validation.coupon) {
       const cpn = this.data.coupons.find(c => c.id === validation.coupon!.id);
       if (cpn) cpn.usedCount += 1;
     }
 
-    // 5. Generate high-entropy cryptographic Order ID
+    // 6. Generate high-entropy cryptographic Order ID
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const randomSuffix = crypto.randomBytes(3).toString('hex').toUpperCase(); // 16.7M unique keys
-    const orderId = `YEM-${dateStr}-${randomSuffix}`;
+    const orderId = clientOrderId && clientOrderId.startsWith('YEM-') ? clientOrderId : `YEM-${dateStr}-${randomSuffix}`;
 
     const sanitizedCustomer: CustomerDetails = {
       fullName,
@@ -994,12 +1083,39 @@ class Store {
       ],
     };
 
+    // 7. Await persistent save to Supabase before reporting success
+    if (isSupabaseConfigured()) {
+      const syncResult = await this.syncOrderToSupabase(newOrder);
+      if (!syncResult.success) {
+        // Rollback deducted stock so inventory is preserved
+        for (const line of validation.validatedItems) {
+          const prod = this.data.products.find(p => p.id === line.product.id);
+          if (prod) {
+            prod.stock += line.quantity;
+            if (line.variant && prod.variants) {
+              const v = prod.variants.find(vr => vr.sku === line.variant.sku);
+              if (v) v.stock += line.quantity;
+            }
+          }
+        }
+        // Rollback coupon usage
+        if (validation.coupon) {
+          const cpn = this.data.coupons.find(c => c.id === validation.coupon!.id);
+          if (cpn && cpn.usedCount > 0) cpn.usedCount -= 1;
+        }
+
+        console.error(`[CRITICAL] Order ${orderId} persistence failed:`, syncResult.error);
+        return {
+          success: false,
+          error: `Unable to save order to persistent database (${syncResult.error || 'Server storage error'}). Please retry.`
+        };
+      }
+    }
+
     this.data.orders.unshift(newOrder);
+    this.lastOrdersHydratedAt = Date.now();
     this.logAudit('ORDER_CREATED', 'Customer', `Order ${orderId} placed (₹${newOrder.grandTotal})`, orderId);
     this.saveDatabaseSync();
-    this.syncOrderToSupabase(newOrder).catch((err) => {
-      console.error('[Supabase Sync Error] createOrder:', err);
-    });
 
     return { success: true, order: newOrder };
   }

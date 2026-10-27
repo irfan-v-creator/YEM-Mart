@@ -81,6 +81,7 @@ interface AdminPanelProps {
   onDeleteCoupon?: (id: string) => void;
   onCloseAdmin: () => void;
   onLogout?: () => void;
+  onRefreshOrders?: () => Promise<void>;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
@@ -102,6 +103,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onDeleteCoupon,
   onCloseAdmin,
   onLogout,
+  onRefreshOrders,
 }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'orders' | 'products' | 'inventory' | 'coupons' | 'audit' | 'cms'>('dashboard');
 
@@ -119,6 +121,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [orderPage, setOrderPage] = useState<number>(1);
   const [orderPageSize, setOrderPageSize] = useState<number>(10);
   const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null);
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
+  const lastOrderRefreshRef = React.useRef<number>(0);
+
+  const handleRefreshOrdersClick = async () => {
+    if (isRefreshingOrders || !onRefreshOrders) return;
+    setIsRefreshingOrders(true);
+    try {
+      await onRefreshOrders();
+      lastOrderRefreshRef.current = Date.now();
+    } catch (err) {
+      console.error('Failed to refresh orders:', err);
+    } finally {
+      setIsRefreshingOrders(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (activeTab === 'orders' && onRefreshOrders) {
+      if (Date.now() - lastOrderRefreshRef.current > 10000) {
+        handleRefreshOrdersClick();
+      }
+    }
+  }, [activeTab]);
 
   // Product editor state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -833,11 +858,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={handleExportOrdersCsv}
-                  className="px-3 py-1.5 rounded-xl border border-[#E7E5E0] hover:bg-neutral-100 text-xs font-semibold flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-xl border border-[#E7E5E0] hover:bg-neutral-100 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                   title="Export Orders to CSV file"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Export CSV</span>
+                </button>
+
+                <button
+                  onClick={handleRefreshOrdersClick}
+                  disabled={isRefreshingOrders}
+                  className="px-3 py-1.5 rounded-xl border border-[#E7E5E0] hover:bg-neutral-100 text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                  title="Sync latest orders directly from database"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingOrders ? 'animate-spin text-[#C9A44C]' : ''}`} />
+                  <span>{isRefreshingOrders ? 'Syncing...' : 'Refresh Orders'}</span>
                 </button>
 
                 <div className="relative">

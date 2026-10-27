@@ -351,13 +351,14 @@ export const api = {
   },
 
   // Orders
-  async getOrders(params?: { status?: string; search?: string; page?: number; limit?: number; summary?: boolean }): Promise<any> {
+  async getOrders(params?: { status?: string; search?: string; page?: number; limit?: number; summary?: boolean; fresh?: boolean }): Promise<any> {
     const q = new URLSearchParams();
     if (params?.status) q.set('status', params.status);
     if (params?.search) q.set('search', params.search);
     if (params?.page) q.set('page', String(params.page));
     if (params?.limit) q.set('limit', String(params.limit));
     if (params?.summary !== undefined) q.set('summary', String(params.summary));
+    if (params?.fresh) q.set('fresh', 'true');
 
     const res = await fetch(`/api/orders?${q.toString()}`, {
       headers: getAdminHeaders(),
@@ -380,11 +381,11 @@ export const api = {
     return res.json();
   },
 
-  async createOrder(customer: CustomerDetails, items: Array<{ productId: string; variantSku?: string; quantity: number }>, couponCode?: string): Promise<Order> {
+  async createOrder(customer: CustomerDetails, items: Array<{ productId: string; variantSku?: string; quantity: number }>, couponCode?: string, clientOrderId?: string): Promise<Order> {
     const res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer, items, couponCode }),
+      body: JSON.stringify({ customer, items, couponCode, clientOrderId }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

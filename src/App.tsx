@@ -798,7 +798,7 @@ export default function App() {
     const fetchPromise = (async () => {
       try {
         const [ordRes, cpnList, audList, stkList, prodList] = await Promise.all([
-          api.getOrders(),
+          api.getOrders({ fresh: true }),
           api.getCoupons(),
           api.getAuditLogs(),
           api.getStockLogs(),
@@ -819,6 +819,17 @@ export default function App() {
 
     adminDataPromiseRef.current = fetchPromise;
     return fetchPromise;
+  }, []);
+
+  const handleRefreshOrders = useCallback(async () => {
+    try {
+      const ordRes = await api.getOrders({ fresh: true });
+      const ordersArray = Array.isArray(ordRes) ? ordRes : (ordRes?.orders || []);
+      setOrders(ordersArray);
+    } catch (err: any) {
+      console.error('Failed to refresh orders:', err);
+      throw err;
+    }
   }, []);
 
   const handleCloseAdmin = () => {
@@ -932,6 +943,7 @@ export default function App() {
         onDeleteCoupon={handleAdminDeleteCoupon}
         onCloseAdmin={handleCloseAdmin}
         onLogout={handleAdminLogout}
+        onRefreshOrders={handleRefreshOrders}
       />
     );
   }

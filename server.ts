@@ -993,8 +993,12 @@ app.post('/api/cart/validate', rateLimit({ windowMs: 60 * 1000, max: 40 }), (req
 
 // --- ORDERS API ---
 // Strictly protected: Only authorized store managers can list all orders
-app.get('/api/orders', requireAdminAuth, (req, res) => {
-  const { status, search, page, limit, summary } = req.query;
+app.get('/api/orders', requireAdminAuth, async (req, res) => {
+  const { status, search, page, limit, summary, fresh } = req.query;
+  // If fresh requested or if orders have not been hydrated in > 15 seconds
+  if (fresh === 'true' || fresh === '1' || Date.now() - store.getLastOrdersHydratedAt() > 15000) {
+    await store.hydrateOrdersFromSupabase().catch(() => {});
+  }
   const result = store.getOrders({
     status: typeof status === 'string' ? status : undefined,
     search: typeof search === 'string' ? search : undefined,
@@ -1005,19 +1009,23 @@ app.get('/api/orders', requireAdminAuth, (req, res) => {
   res.json(result);
 });
 
-app.get('/api/orders/:id', requireAdminAuth, (req, res) => {
-  const order = store.getOrderById(req.params.id);
+app.get('/api/orders/:id', requireAdminAuth, async (req, res) => {
+  let order = store.getOrderById(req.params.id);
+  if (!order) {
+    await store.hydrateOrdersFromSupabase(true).catch(() => {});
+    order = store.getOrderById(req.params.id);
+  }
   if (!order) return res.status(404).json({ error: 'Order not found' });
   res.json(order);
 });
 
 // Customer can place order with server-side validation & rate limiting
-app.post('/api/orders', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: 'Too many order requests. Please wait a moment.' }), (req, res) => {
-  const { customer, items, couponCode } = req.body;
+app.post('/api/orders', rateLimit({ windowMs: 10 * 60 * 1000, max: 20, message: 'Too many order requests. Please wait a moment.' }), async (req, res) => {
+  const { customer, items, couponCode, clientOrderId } = req.body;
   if (!customer || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Customer details and items are required' });
   }
-  const result = store.createOrder(customer, items, couponCode);
+  const result = await store.createOrder(customer, items, couponCode, clientOrderId);
   if (!result.success) {
     return res.status(400).json({ error: result.error });
   }
