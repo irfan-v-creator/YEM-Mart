@@ -34,7 +34,13 @@ import {
   Calendar,
   Lock,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Sparkles,
+  Check,
+  CheckSquare,
+  RefreshCw,
+  HelpCircle,
+  ListPlus
 } from 'lucide-react';
 import { 
   Product, 
@@ -53,6 +59,8 @@ import { formatCurrency, formatDate } from '../utils/formatters';
 import { api } from '../utils/api';
 import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG, isGoogleDriveUrl } from '../utils/imageUrl';
 import { generateNextSku, getCategorySkuPrefix } from '../utils/sku';
+import { CATEGORY_SUGGESTED_SPECS, sanitizeSpecs, sanitizeHighlights } from '../utils/categorySpecs';
+import { ProductHighlightsAndSpecs } from './ProductHighlightsAndSpecs';
 
 interface AdminPanelProps {
   products: Product[];
@@ -117,6 +125,167 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isCreatingNewProduct, setIsCreatingNewProduct] = useState(false);
   const [brokenImageMap, setBrokenImageMap] = useState<Record<string, boolean>>({});
+  const [editorTab, setEditorTab] = useState<'details' | 'specs' | 'preview'>('details');
+  const [customSpecs, setCustomSpecs] = useState<Array<{ key: string; value: string }>>([]);
+  const [isGeneratingAiSuggestions, setIsGeneratingAiSuggestions] = useState(false);
+  const [aiSuggestionResult, setAiSuggestionResult] = useState<{
+    source: string;
+    aiAvailable: boolean;
+    suggestedDescription?: string;
+    suggestedShortSummary?: string;
+    highlights: Array<{ text: string; isUncertain: boolean; uncertainNote?: string }>;
+    specs: Array<{ key: string; value: string; isUncertain: boolean; uncertainNote?: string }>;
+  } | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const openProductEditor = (prod: Product, isNew = false) => {
+    setIsCreatingNewProduct(isNew);
+    setIsAddProductOpen(isNew);
+    setEditorTab('details');
+    setAiSuggestionResult(null);
+    setAiError(null);
+
+    // Populate custom specs: any specs on the product that are NOT in the category suggested specs list
+    const categoryConfig = CATEGORY_SUGGESTED_SPECS[prod.category] || CATEGORY_SUGGESTED_SPECS['Others'];
+    const suggestedKeySet = new Set(categoryConfig.map(s => s.key.toLowerCase()));
+
+    const initialCustomSpecs: Array<{ key: string; value: string }> = [];
+    if (prod.specs && typeof prod.specs === 'object') {
+      Object.entries(prod.specs).forEach(([k, v]) => {
+        if (!suggestedKeySet.has(k.toLowerCase())) {
+          initialCustomSpecs.push({ key: k, value: String(v) });
+        }
+      });
+    }
+    setCustomSpecs(initialCustomSpecs);
+    setEditingProduct({
+      ...prod,
+      highlights: Array.isArray(prod.highlights) ? [...prod.highlights] : [],
+      specs: prod.specs ? { ...prod.specs } : {},
+    });
+  };
+
+  const handleRequestAiSuggestions = async () => {
+    if (!editingProduct) return;
+    setIsGeneratingAiSuggestions(true);
+    setAiError(null);
+    try {
+      const currentSpecs: Record<string, string> = { ...(editingProduct.specs || {}) };
+      customSpecs.forEach(({ key, value }) => {
+        if (key.trim() && value.trim()) {
+          currentSpecs[key.trim()] = value.trim();
+        }
+      });
+
+      const res = await api.suggestProductDetails({
+        name: editingProduct.name,
+        brand: editingProduct.brand,
+        category: editingProduct.category,
+        description: editingProduct.description,
+        existingSpecs: currentSpecs,
+        existingHighlights: editingProduct.highlights || [],
+      });
+
+      setAiSuggestionResult(res);
+    } catch (err: any) {
+      console.error('Failed to get AI suggestions:', err);
+      setAiError(err.message || 'Failed to generate suggestions. Please verify product details and retry.');
+    } finally {
+      setIsGeneratingAiSuggestions(false);
+    }
+  };
+
+  const handleAcceptHighlight = (text: string) => {
+    if (!editingProduct) return;
+    const current = editingProduct.highlights || [];
+    if (!current.includes(text)) {
+      setEditingProduct({
+        ...editingProduct,
+        highlights: [...current, text],
+      });
+    }
+    if (aiSuggestionResult) {
+      setAiSuggestionResult({
+        ...aiSuggestionResult,
+        highlights: aiSuggestionResult.highlights.filter(h => h.text !== text),
+      });
+    }
+  };
+
+  const handleDismissHighlight = (text: string) => {
+    if (aiSuggestionResult) {
+      setAiSuggestionResult({
+        ...aiSuggestionResult,
+        highlights: aiSuggestionResult.highlights.filter(h => h.text !== text),
+      });
+    }
+  };
+
+  const handleAcceptAllVerifiedHighlights = () => {
+    if (!editingProduct || !aiSuggestionResult) return;
+    const verified = aiSuggestionResult.highlights.filter(h => !h.isUncertain).map(h => h.text);
+    const current = editingProduct.highlights || [];
+    const merged = Array.from(new Set([...current, ...verified]));
+    setEditingProduct({
+      ...editingProduct,
+      highlights: merged,
+    });
+    setAiSuggestionResult({
+      ...aiSuggestionResult,
+      highlights: aiSuggestionResult.highlights.filter(h => h.isUncertain),
+    });
+  };
+
+  const handleAcceptSpec = (key: string, value: string) => {
+    if (!editingProduct) return;
+    const categoryConfig = CATEGORY_SUGGESTED_SPECS[editingProduct.category] || CATEGORY_SUGGESTED_SPECS['Others'];
+    const matchingSuggested = categoryConfig.find(c => c.key.toLowerCase() === key.toLowerCase());
+    const targetKey = matchingSuggested ? matchingSuggested.key : key;
+
+    setEditingProduct({
+      ...editingProduct,
+      specs: {
+        ...(editingProduct.specs || {}),
+        [targetKey]: value,
+      },
+    });
+
+    if (!matchingSuggested) {
+      const existsIndex = customSpecs.findIndex(cs => cs.key.toLowerCase() === key.toLowerCase());
+      if (existsIndex >= 0) {
+        const updated = [...customSpecs];
+        updated[existsIndex] = { key: targetKey, value };
+        setCustomSpecs(updated);
+      } else {
+        setCustomSpecs(prev => [...prev, { key: targetKey, value }]);
+      }
+    }
+
+    if (aiSuggestionResult) {
+      setAiSuggestionResult({
+        ...aiSuggestionResult,
+        specs: aiSuggestionResult.specs.filter(s => s.key !== key),
+      });
+    }
+  };
+
+  const handleDismissSpec = (key: string) => {
+    if (aiSuggestionResult) {
+      setAiSuggestionResult({
+        ...aiSuggestionResult,
+        specs: aiSuggestionResult.specs.filter(s => s.key !== key),
+      });
+    }
+  };
+
+  const handleAcceptAllVerifiedSpecs = () => {
+    if (!editingProduct || !aiSuggestionResult) return;
+    const verified = [...aiSuggestionResult.specs.filter(s => !s.isUncertain)];
+    verified.forEach(s => {
+      handleAcceptSpec(s.key, s.value);
+    });
+  };
+
 
   // CSV Import Modal state
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
@@ -945,9 +1114,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         tags: ['new'],
                         variants: [],
                       };
-                      setIsCreatingNewProduct(true);
-                      setEditingProduct(newEmptyProd);
-                      setIsAddProductOpen(true);
+                      openProductEditor(newEmptyProd, true);
                     }}
                     className="px-4 py-2 rounded-xl bg-[#171717] text-white font-bold text-xs hover:bg-[#C9A44C] hover:text-[#171717] transition-all flex items-center gap-1.5 shadow-sm"
                   >
@@ -1026,9 +1193,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => {
-                              setIsCreatingNewProduct(false);
-                              setEditingProduct({ ...prod });
-                              setIsAddProductOpen(false);
+                              openProductEditor(prod, false);
                             }}
                             className="p-1.5 rounded bg-white text-neutral-600 hover:text-black border border-[#E7E5E0]"
                             title="Edit Product"
@@ -1674,11 +1839,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         {/* Modal: Product Add/Edit Form */}
         {editingProduct && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-neutral-200 max-h-[92vh] overflow-y-auto space-y-4">
-              <div className="flex items-center justify-between border-b pb-3">
-                <h3 className="font-extrabold text-base text-[#171717]">
-                  {isAddProductOpen ? 'Add New Product' : `Edit: ${editingProduct.name}`}
-                </h3>
+            <div className="bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl border border-neutral-200 max-h-[92vh] flex flex-col space-y-4">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between border-b pb-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-neutral-100 flex items-center justify-center text-neutral-700">
+                    <Package className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base text-[#171717]">
+                      {isAddProductOpen ? 'Add New Product' : `Edit: ${editingProduct.name || 'Untitled'}`}
+                    </h3>
+                    <p className="text-[11px] text-neutral-500">
+                      SKU: <span className="font-mono font-bold">{editingProduct.sku || 'Unassigned'}</span> • Category: <span className="font-bold">{editingProduct.category}</span>
+                    </p>
+                  </div>
+                </div>
                 <button
                   onClick={() => setEditingProduct(null)}
                   className="p-1.5 rounded-xl text-neutral-400 hover:text-black hover:bg-neutral-100"
@@ -1687,248 +1863,732 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div>
-                  <label className="block font-bold mb-1">Product Title *</label>
-                  <input
-                    type="text"
-                    value={editingProduct.name}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
-                  />
-                </div>
+              {/* Editor Tabs Navigation */}
+              <div className="flex border-b border-neutral-200 gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEditorTab('details')}
+                  className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+                    editorTab === 'details'
+                      ? 'border-[#171717] text-[#171717]'
+                      : 'border-transparent text-neutral-400 hover:text-neutral-700'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>1. Basic & Pricing</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditorTab('specs')}
+                  className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+                    editorTab === 'specs'
+                      ? 'border-[#171717] text-[#171717]'
+                      : 'border-transparent text-neutral-400 hover:text-neutral-700'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>2. Highlights & Specifications</span>
+                  {((editingProduct.highlights && editingProduct.highlights.length > 0) || (editingProduct.specs && Object.keys(editingProduct.specs).length > 0)) && (
+                    <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                      {(editingProduct.highlights?.length || 0) + Object.keys(editingProduct.specs || {}).length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditorTab('preview')}
+                  className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 ${
+                    editorTab === 'preview'
+                      ? 'border-[#171717] text-[#171717]'
+                      : 'border-transparent text-neutral-400 hover:text-neutral-700'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>3. Storefront Preview</span>
+                </button>
+              </div>
 
-                <div>
-                  <label className="block font-bold mb-1">Brand</label>
-                  <input
-                    type="text"
-                    value={editingProduct.brand}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, brand: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold mb-1">Category *</label>
-                  <select
-                    value={editingProduct.category}
-                    onChange={(e) => {
-                      const newCat = e.target.value as Category;
-                      if (isCreatingNewProduct) {
-                        const newSku = generateNextSku(newCat, products);
-                        setEditingProduct({ ...editingProduct, category: newCat, sku: newSku });
-                      } else {
-                        setEditingProduct({ ...editingProduct, category: newCat });
-                      }
-                    }}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none bg-white font-medium"
-                  >
-                    <option value="Fashion">Fashion</option>
-                    <option value="Accessories">Accessories</option>
-                    <option value="Electronics">Electronics</option>
-                    <option value="Home & Kitchen">Home & Kitchen</option>
-                    <option value="Stationery">Stationery</option>
-                    <option value="Kids">Kids</option>
-                    <option value="Gifts">Gifts</option>
-                    <option value="Others">Others</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block font-bold">SKU (Auto or Custom)</label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newSku = generateNextSku(editingProduct.category, products);
-                        setEditingProduct({ ...editingProduct, sku: newSku });
-                      }}
-                      className="text-[10px] text-[#C9A44C] hover:text-amber-800 font-bold hover:underline"
-                    >
-                      Auto-generate ({getCategorySkuPrefix(editingProduct.category)})
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={editingProduct.sku}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value.trim() })}
-                    placeholder={`e.g. YM-${getCategorySkuPrefix(editingProduct.category)}-001`}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold mb-1">Publication Status *</label>
-                  <select
-                    value={editingProduct.status}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, status: e.target.value as ProductPublicationStatus })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none bg-white font-bold"
-                  >
-                    <option value="published">Published (Visible to Customers)</option>
-                    <option value="draft">Draft (Hidden)</option>
-                    <option value="scheduled">Scheduled</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold mb-1">Selling Price (₹) *</label>
-                  <input
-                    type="number"
-                    value={editingProduct.price}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, price: Number(e.target.value) })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold mb-1">Original Price (₹) for discount tag</label>
-                  <input
-                    type="number"
-                    value={editingProduct.originalPrice || ''}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, originalPrice: Number(e.target.value) })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold mb-1">Total Available Stock *</label>
-                  <input
-                    type="number"
-                    value={editingProduct.stock}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, stock: Number(e.target.value) })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block font-bold">Main Image URL</label>
-                    {isGoogleDriveUrl(editingProduct.mainImage) && (
-                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                        ✓ Google Drive link auto-converted to high-speed CDN image
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex gap-3 items-center">
-                    <div className="w-14 h-14 rounded-xl border border-neutral-300 bg-white p-1 shrink-0 overflow-hidden flex items-center justify-center">
-                      <img
-                        src={normalizeProductImageUrl(editingProduct.mainImage) || IMAGE_FALLBACK_SVG}
-                        alt="Preview"
-                        onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                    <input
-                      type="text"
-                      value={editingProduct.mainImage}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setEditingProduct({
-                          ...editingProduct,
-                          mainImage: val,
-                          images: [val, ...(editingProduct.images.slice(1))],
-                        });
-                      }}
-                      placeholder="https://... or Google Drive file link"
-                      className="flex-1 p-2.5 rounded-xl border border-[#E7E5E0] outline-none font-mono text-xs"
-                    />
-                  </div>
-                </div>
-
-                {/* Multiple Images Reordering */}
-                <div className="sm:col-span-2 space-y-2">
-                  <label className="block font-bold">Image Gallery List</label>
-                  {editingProduct.images.map((img, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      {img && img.trim() ? (
-                        <img
-                          src={normalizeProductImageUrl(img) || IMAGE_FALLBACK_SVG}
-                          alt=""
-                          onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
-                          className="w-8 h-8 rounded object-contain bg-neutral-100 border shrink-0"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 rounded bg-neutral-100 border shrink-0 flex items-center justify-center text-xs text-neutral-400">🖼️</div>
-                      )}
+              {/* Scrollable Form Body */}
+              <div className="overflow-y-auto flex-1 pr-1 space-y-4">
+                {/* TAB 1: BASIC DETAILS & PRICING */}
+                {editorTab === 'details' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <label className="block font-bold mb-1">Product Title *</label>
                       <input
                         type="text"
-                        value={img}
-                        onChange={(e) => {
-                          const updated = [...editingProduct.images];
-                          updated[idx] = e.target.value;
-                          setEditingProduct({ ...editingProduct, images: updated });
-                        }}
-                        className="flex-1 p-2 rounded-lg border text-xs"
+                        value={editingProduct.name}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
+                        placeholder="e.g. Classic Oversized Cotton T-Shirt"
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">Brand</label>
+                      <input
+                        type="text"
+                        value={editingProduct.brand}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, brand: e.target.value })}
+                        placeholder="e.g. YEM MART"
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">Category *</label>
+                      <select
+                        value={editingProduct.category}
+                        onChange={(e) => {
+                          const newCat = e.target.value as Category;
+                          if (isCreatingNewProduct) {
+                            const newSku = generateNextSku(newCat, products);
+                            setEditingProduct({ ...editingProduct, category: newCat, sku: newSku });
+                          } else {
+                            setEditingProduct({ ...editingProduct, category: newCat });
+                          }
+                        }}
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none bg-white font-medium"
+                      >
+                        <option value="Fashion">Fashion</option>
+                        <option value="Accessories">Accessories</option>
+                        <option value="Electronics">Electronics</option>
+                        <option value="Home & Kitchen">Home & Kitchen</option>
+                        <option value="Stationery">Stationery</option>
+                        <option value="Kids">Kids</option>
+                        <option value="Gifts">Gifts</option>
+                        <option value="Others">Others</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-bold">SKU (Auto or Custom)</label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newSku = generateNextSku(editingProduct.category, products);
+                            setEditingProduct({ ...editingProduct, sku: newSku });
+                          }}
+                          className="text-[10px] text-[#C9A44C] hover:text-amber-800 font-bold hover:underline"
+                        >
+                          Auto-generate ({getCategorySkuPrefix(editingProduct.category)})
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={editingProduct.sku}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value.trim() })}
+                        placeholder={`e.g. YM-${getCategorySkuPrefix(editingProduct.category)}-001`}
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">Publication Status *</label>
+                      <select
+                        value={editingProduct.status}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, status: e.target.value as ProductPublicationStatus })}
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none bg-white font-bold"
+                      >
+                        <option value="published">Published (Visible to Customers)</option>
+                        <option value="draft">Draft (Hidden)</option>
+                        <option value="scheduled">Scheduled</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">Selling Price (₹) *</label>
+                      <input
+                        type="number"
+                        value={editingProduct.price}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, price: Number(e.target.value) })}
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">Original Price (₹) for discount tag</label>
+                      <input
+                        type="number"
+                        value={editingProduct.originalPrice || ''}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, originalPrice: Number(e.target.value) })}
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">Total Available Stock *</label>
+                      <input
+                        type="number"
+                        value={editingProduct.stock}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, stock: Number(e.target.value) })}
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-bold">Main Image URL</label>
+                        {isGoogleDriveUrl(editingProduct.mainImage) && (
+                          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            ✓ Google Drive link auto-converted to high-speed CDN image
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex gap-3 items-center">
+                        <div className="w-14 h-14 rounded-xl border border-neutral-300 bg-white p-1 shrink-0 overflow-hidden flex items-center justify-center">
+                          <img
+                            src={normalizeProductImageUrl(editingProduct.mainImage) || IMAGE_FALLBACK_SVG}
+                            alt="Preview"
+                            onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                        <input
+                          type="text"
+                          value={editingProduct.mainImage}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditingProduct({
+                              ...editingProduct,
+                              mainImage: val,
+                              images: [val, ...(editingProduct.images.slice(1))],
+                            });
+                          }}
+                          placeholder="https://... or Google Drive file link"
+                          className="flex-1 p-2.5 rounded-xl border border-[#E7E5E0] outline-none font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Multiple Images Reordering */}
+                    <div className="sm:col-span-2 space-y-2">
+                      <label className="block font-bold">Image Gallery List</label>
+                      {editingProduct.images.map((img, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          {img && img.trim() ? (
+                            <img
+                              src={normalizeProductImageUrl(img) || IMAGE_FALLBACK_SVG}
+                              alt=""
+                              onError={(e) => { (e.target as HTMLImageElement).src = IMAGE_FALLBACK_SVG; }}
+                              className="w-8 h-8 rounded object-contain bg-neutral-100 border shrink-0"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded bg-neutral-100 border shrink-0 flex items-center justify-center text-xs text-neutral-400">🖼️</div>
+                          )}
+                          <input
+                            type="text"
+                            value={img}
+                            onChange={(e) => {
+                              const updated = [...editingProduct.images];
+                              updated[idx] = e.target.value;
+                              setEditingProduct({ ...editingProduct, images: updated });
+                            }}
+                            className="flex-1 p-2 rounded-lg border text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = editingProduct.images.filter((_, i) => i !== idx);
+                              setEditingProduct({ ...editingProduct, images: updated });
+                            }}
+                            className="text-red-500 hover:text-red-700 p-1"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
                       <button
                         type="button"
                         onClick={() => {
-                          const updated = editingProduct.images.filter((_, i) => i !== idx);
-                          setEditingProduct({ ...editingProduct, images: updated });
+                          setEditingProduct({
+                            ...editingProduct,
+                            images: [...editingProduct.images, 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80'],
+                          });
                         }}
-                        className="text-red-500 hover:text-red-700 p-1"
+                        className="text-xs text-[#C9A44C] font-bold hover:underline"
                       >
-                        ✕
+                        + Add Additional Image URL
                       </button>
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingProduct({
-                        ...editingProduct,
-                        images: [...editingProduct.images, 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80'],
-                      });
-                    }}
-                    className="text-xs text-[#C9A44C] font-bold hover:underline"
-                  >
-                    + Add Additional Image URL
-                  </button>
-                </div>
 
-                <div className="sm:col-span-2">
-                  <label className="block font-bold mb-1">Product Description</label>
-                  <textarea
-                    rows={2}
-                    value={editingProduct.description}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
-                  />
-                </div>
+                    <div className="sm:col-span-2">
+                      <label className="block font-bold mb-1">Product Description</label>
+                      <textarea
+                        rows={3}
+                        value={editingProduct.description}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })}
+                        placeholder="Comprehensive product details, craftsmanship, styling advice, or usage guidelines..."
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none"
+                      />
+                    </div>
 
-                <div className="sm:col-span-2 flex items-center gap-4 pt-2">
-                  <label className="flex items-center gap-2 cursor-pointer font-bold">
-                    <input
-                      type="checkbox"
-                      checked={editingProduct.isFeatured}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, isFeatured: e.target.checked })}
-                      className="rounded"
-                    />
-                    <span>Featured on Homepage</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer font-bold">
-                    <input
-                      type="checkbox"
-                      checked={editingProduct.isBestDeal}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, isBestDeal: e.target.checked })}
-                      className="rounded"
-                    />
-                    <span>Best Deal</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer font-bold">
-                    <input
-                      type="checkbox"
-                      checked={editingProduct.isNewArrival}
-                      onChange={(e) => setEditingProduct({ ...editingProduct, isNewArrival: e.target.checked })}
-                      className="rounded"
-                    />
-                    <span>New Arrival</span>
-                  </label>
-                </div>
+                    <div className="sm:col-span-2 flex items-center gap-4 pt-2">
+                      <label className="flex items-center gap-2 cursor-pointer font-bold">
+                        <input
+                          type="checkbox"
+                          checked={editingProduct.isFeatured}
+                          onChange={(e) => setEditingProduct({ ...editingProduct, isFeatured: e.target.checked })}
+                          className="rounded"
+                        />
+                        <span>Featured on Homepage</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer font-bold">
+                        <input
+                          type="checkbox"
+                          checked={editingProduct.isBestDeal}
+                          onChange={(e) => setEditingProduct({ ...editingProduct, isBestDeal: e.target.checked })}
+                          className="rounded"
+                        />
+                        <span>Best Deal</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer font-bold">
+                        <input
+                          type="checkbox"
+                          checked={editingProduct.isNewArrival}
+                          onChange={(e) => setEditingProduct({ ...editingProduct, isNewArrival: e.target.checked })}
+                          className="rounded"
+                        />
+                        <span>New Arrival</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: KEY HIGHLIGHTS & SPECIFICATIONS */}
+                {editorTab === 'specs' && (
+                  <div className="space-y-6 text-xs">
+                    {/* AI Assistant Section */}
+                    <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700">
+                            <Sparkles className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-[#171717] text-xs">AI Highlights & Specs Assistant</h4>
+                            <p className="text-[11px] text-neutral-500">
+                              Draft truthful points from title, brand, and description without fabricating unverified claims.
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleRequestAiSuggestions}
+                          disabled={isGeneratingAiSuggestions}
+                          className="px-3.5 py-2 rounded-xl bg-[#171717] text-white hover:bg-[#C9A44C] hover:text-[#171717] font-bold text-xs transition-colors flex items-center gap-1.5 self-start sm:self-auto disabled:opacity-50"
+                        >
+                          {isGeneratingAiSuggestions ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>Drafting with AI...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span>✨ Suggest Details with AI</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {aiError && (
+                        <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center justify-between">
+                          <span>{aiError}</span>
+                          <button
+                            type="button"
+                            onClick={() => setAiError(null)}
+                            className="text-red-500 font-bold hover:underline ml-2"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+
+                      {/* AI Suggestions Review Panel */}
+                      {aiSuggestionResult && (
+                        <div className="mt-3 p-3.5 rounded-xl bg-white border border-amber-200 space-y-3">
+                          <div className="flex items-center justify-between border-b border-amber-100 pb-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                                {aiSuggestionResult.source === 'gemini-ai' ? 'Gemini AI Draft' : 'Category Draft'}
+                              </span>
+                              <span className="text-[11px] text-neutral-600 font-medium">
+                                Review & approve suggestions before saving
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setAiSuggestionResult(null)}
+                              className="text-neutral-400 hover:text-neutral-700 text-xs font-bold"
+                            >
+                              Dismiss Draft
+                            </button>
+                          </div>
+
+                          {aiSuggestionResult.suggestedDescription && (
+                            <div className="p-2.5 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <span className="font-bold text-[11px] text-neutral-700 block">Suggested Polished Description:</span>
+                                <p className="text-[11px] text-neutral-600 truncate">{aiSuggestionResult.suggestedDescription}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (aiSuggestionResult.suggestedDescription) {
+                                    setEditingProduct({
+                                      ...editingProduct,
+                                      description: aiSuggestionResult.suggestedDescription,
+                                    });
+                                  }
+                                }}
+                                className="px-2.5 py-1 rounded-md bg-[#171717] text-white hover:bg-emerald-600 font-bold text-[11px] shrink-0"
+                              >
+                                Apply Description
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Suggested Highlights */}
+                          {aiSuggestionResult.highlights && aiSuggestionResult.highlights.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-neutral-800 text-[11px]">Proposed Key Highlights:</span>
+                                <button
+                                  type="button"
+                                  onClick={handleAcceptAllVerifiedHighlights}
+                                  className="text-[10px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline"
+                                >
+                                  Accept All Verified
+                                </button>
+                              </div>
+                              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                                {aiSuggestionResult.highlights.map((h, i) => (
+                                  <div
+                                    key={i}
+                                    className={`p-2 rounded-lg border flex items-center justify-between gap-2 ${
+                                      h.isUncertain
+                                        ? 'bg-amber-50/60 border-amber-300'
+                                        : 'bg-emerald-50/40 border-emerald-200'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${h.isUncertain ? 'text-amber-500' : 'text-emerald-600'}`} />
+                                      <span className="text-[11px] text-neutral-800 truncate">{h.text}</span>
+                                      {h.isUncertain && (
+                                        <span className="text-[9px] bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded font-bold shrink-0">
+                                          Review Needed
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAcceptHighlight(h.text)}
+                                        className="px-2 py-0.5 rounded bg-emerald-600 text-white font-bold text-[10px] hover:bg-emerald-700"
+                                      >
+                                        Accept
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDismissHighlight(h.text)}
+                                        className="px-1.5 py-0.5 rounded text-neutral-400 hover:text-neutral-700 text-[10px]"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Suggested Specifications */}
+                          {aiSuggestionResult.specs && aiSuggestionResult.specs.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-neutral-800 text-[11px]">Proposed Specifications:</span>
+                                <button
+                                  type="button"
+                                  onClick={handleAcceptAllVerifiedSpecs}
+                                  className="text-[10px] text-emerald-700 hover:text-emerald-900 font-bold hover:underline"
+                                >
+                                  Accept All Verified Specs
+                                </button>
+                              </div>
+                              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                                {aiSuggestionResult.specs.map((s, i) => (
+                                  <div
+                                    key={i}
+                                    className={`p-2 rounded-lg border flex items-center justify-between gap-2 ${
+                                      s.isUncertain
+                                        ? 'bg-amber-50/60 border-amber-300'
+                                        : 'bg-emerald-50/40 border-emerald-200'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="font-bold text-[11px] text-neutral-700 shrink-0">{s.key}:</span>
+                                      <span className="text-[11px] text-neutral-900 truncate">{s.value}</span>
+                                      {s.isUncertain && (
+                                        <span className="text-[9px] bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded font-bold shrink-0">
+                                          Review Needed
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAcceptSpec(s.key, s.value)}
+                                        className="px-2 py-0.5 rounded bg-emerald-600 text-white font-bold text-[10px] hover:bg-emerald-700"
+                                      >
+                                        Accept
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDismissSpec(s.key)}
+                                        className="px-1.5 py-0.5 rounded text-neutral-400 hover:text-neutral-700 text-[10px]"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Section 1: Key Highlights (Bullet Points) */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <label className="block font-bold text-[#171717]">
+                            Key Highlights (Storefront Bullet Points)
+                          </label>
+                          <p className="text-[11px] text-neutral-500">
+                            Displayed with emerald checkmark badges on the storefront. Use clear, factual selling points.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const current = editingProduct.highlights || [];
+                            setEditingProduct({
+                              ...editingProduct,
+                              highlights: [...current, ''],
+                            });
+                          }}
+                          className="px-2.5 py-1 rounded-lg border border-[#E7E5E0] hover:bg-neutral-100 font-bold text-xs text-[#171717] flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Add Highlight</span>
+                        </button>
+                      </div>
+
+                      {(!editingProduct.highlights || editingProduct.highlights.length === 0) ? (
+                        <div className="p-3 rounded-xl border border-dashed border-neutral-300 text-center text-neutral-400 text-xs">
+                          No highlights added yet. Click &quot;Add Highlight&quot; or use the AI Assistant above.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {editingProduct.highlights.map((hl, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-md bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-[10px] shrink-0 border border-emerald-200">
+                                ✓
+                              </span>
+                              <input
+                                type="text"
+                                value={hl}
+                                onChange={(e) => {
+                                  const updated = [...(editingProduct.highlights || [])];
+                                  updated[idx] = e.target.value;
+                                  setEditingProduct({ ...editingProduct, highlights: updated });
+                                }}
+                                placeholder="e.g. 100% Ring-Spun Combed Cotton (180 GSM)"
+                                className="flex-1 p-2 rounded-xl border border-[#E7E5E0] outline-none text-xs"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = (editingProduct.highlights || []).filter((_, i) => i !== idx);
+                                  setEditingProduct({ ...editingProduct, highlights: updated });
+                                }}
+                                className="p-1.5 text-neutral-400 hover:text-red-600 rounded-lg"
+                                title="Remove Highlight"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Section 2: Category Suggested Specifications */}
+                    <div className="space-y-2 pt-2 border-t border-neutral-200">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <label className="block font-bold text-[#171717]">
+                            Category Specifications ({editingProduct.category})
+                          </label>
+                          <span className="text-[10px] font-semibold text-neutral-400">
+                            Leave blank if unknown (blank items will not be shown to customers)
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-neutral-500">
+                          Tailored attributes for {editingProduct.category}. Enter genuine details only.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {(CATEGORY_SUGGESTED_SPECS[editingProduct.category] || CATEGORY_SUGGESTED_SPECS['Others']).map((specField) => {
+                          const currentValue = editingProduct.specs?.[specField.key] || '';
+                          return (
+                            <div key={specField.key} className="space-y-1">
+                              <label className="block font-semibold text-neutral-700 text-[11px]">
+                                {specField.label}
+                              </label>
+                              <input
+                                type="text"
+                                value={currentValue}
+                                onChange={(e) => {
+                                  setEditingProduct({
+                                    ...editingProduct,
+                                    specs: {
+                                      ...(editingProduct.specs || {}),
+                                      [specField.key]: e.target.value,
+                                    },
+                                  });
+                                }}
+                                placeholder={specField.placeholder}
+                                className="w-full p-2 rounded-xl border border-[#E7E5E0] outline-none text-xs"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Section 3: Custom / Additional Specifications */}
+                    <div className="space-y-2 pt-2 border-t border-neutral-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <label className="block font-bold text-[#171717]">
+                            Additional Custom Specifications
+                          </label>
+                          <p className="text-[11px] text-neutral-500">
+                            Add any other technical or physical attribute as a label/value pair.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomSpecs((prev) => [...prev, { key: '', value: '' }]);
+                          }}
+                          className="px-2.5 py-1 rounded-lg border border-[#E7E5E0] hover:bg-neutral-100 font-bold text-xs text-[#171717] flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Add Custom Spec</span>
+                        </button>
+                      </div>
+
+                      {customSpecs.length === 0 ? (
+                        <div className="p-3 rounded-xl border border-dashed border-neutral-300 text-center text-neutral-400 text-xs">
+                          No custom specifications added. Click &quot;Add Custom Spec&quot; if this item requires attributes beyond the standard category fields.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {customSpecs.map((cs, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={cs.key}
+                                onChange={(e) => {
+                                  const updated = [...customSpecs];
+                                  updated[idx] = { ...updated[idx], key: e.target.value };
+                                  setCustomSpecs(updated);
+                                }}
+                                placeholder="Attribute Name (e.g. Battery Life)"
+                                className="w-1/3 p-2 rounded-xl border border-[#E7E5E0] outline-none text-xs font-semibold"
+                              />
+                              <input
+                                type="text"
+                                value={cs.value}
+                                onChange={(e) => {
+                                  const updated = [...customSpecs];
+                                  updated[idx] = { ...updated[idx], value: e.target.value };
+                                  setCustomSpecs(updated);
+                                }}
+                                placeholder="Attribute Value (e.g. Up to 36 Hours)"
+                                className="flex-1 p-2 rounded-xl border border-[#E7E5E0] outline-none text-xs"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCustomSpecs((prev) => prev.filter((_, i) => i !== idx));
+                                }}
+                                className="p-1.5 text-neutral-400 hover:text-red-600 rounded-lg"
+                                title="Remove Specification"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: STOREFRONT PREVIEW */}
+                {editorTab === 'preview' && (() => {
+                  const previewSpecs: Record<string, string> = { ...(editingProduct.specs || {}) };
+                  customSpecs.forEach((cs) => {
+                    if (cs.key.trim() && cs.value.trim()) {
+                      previewSpecs[cs.key.trim()] = cs.value.trim();
+                    }
+                  });
+                  const previewProduct: Product = {
+                    ...editingProduct,
+                    specs: previewSpecs,
+                  };
+
+                  const hasAnyHighlights = (previewProduct.highlights || []).some(h => Boolean(h && h.trim()));
+                  const hasAnySpecs = Object.values(previewSpecs).some(v => Boolean(v && v.trim()));
+
+                  return (
+                    <div className="space-y-4">
+                      <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-200/80 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Eye className="w-4 h-4 text-amber-800" />
+                          <span className="text-xs font-bold text-amber-900">
+                            Live Storefront Customer View
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-neutral-600">
+                          {hasAnyHighlights || hasAnySpecs
+                            ? 'Rendered identically in Quick View and Product Details'
+                            : 'Both sections currently empty (will be hidden on customer storefront)'}
+                        </span>
+                      </div>
+
+                      <div className="border border-neutral-200 rounded-2xl p-4 bg-white shadow-xs">
+                        <ProductHighlightsAndSpecs product={previewProduct} showCardContainer={false} />
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              <div className="flex gap-2 pt-3 border-t">
+              {/* Modal Footer */}
+              <div className="flex gap-2 pt-3 border-t shrink-0">
                 <button
+                  type="button"
                   onClick={() => {
                     if (!editingProduct.name.trim()) {
                       alert('Please provide product title');
@@ -1939,20 +2599,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       return;
                     }
 
+                    // Merge category specs and customSpecs
+                    const mergedSpecs: Record<string, string> = { ...(editingProduct.specs || {}) };
+                    // Clean out empty category specs
+                    Object.keys(mergedSpecs).forEach((k) => {
+                      if (!mergedSpecs[k] || !mergedSpecs[k].trim()) {
+                        delete mergedSpecs[k];
+                      }
+                    });
+                    // Add custom specs
+                    customSpecs.forEach(({ key, value }) => {
+                      const k = key.trim();
+                      const v = value.trim();
+                      if (k && v) {
+                        mergedSpecs[k] = v;
+                      }
+                    });
+
+                    const cleanedHighlights = (editingProduct.highlights || [])
+                      .map((h) => (typeof h === 'string' ? h.trim() : ''))
+                      .filter(Boolean);
+
+                    const finalProductToSave: Product = {
+                      ...editingProduct,
+                      highlights: cleanedHighlights,
+                      specs: mergedSpecs,
+                    };
+
                     if (isAddProductOpen) {
-                      onAddProduct(editingProduct);
+                      onAddProduct(finalProductToSave);
                     } else {
-                      onUpdateProduct(editingProduct);
+                      onUpdateProduct(finalProductToSave);
                     }
                     setEditingProduct(null);
                   }}
-                  className="flex-1 py-3 rounded-xl bg-[#171717] text-white font-bold text-xs hover:bg-[#C9A44C] hover:text-[#171717]"
+                  className="flex-1 py-3 rounded-xl bg-[#171717] text-white font-bold text-xs hover:bg-[#C9A44C] hover:text-[#171717] transition-colors"
                 >
                   Save Product
                 </button>
                 <button
+                  type="button"
                   onClick={() => setEditingProduct(null)}
-                  className="px-4 py-3 rounded-xl bg-neutral-100 text-neutral-700 font-bold text-xs"
+                  className="px-4 py-3 rounded-xl bg-neutral-100 text-neutral-700 font-bold text-xs hover:bg-neutral-200 transition-colors"
                 >
                   Cancel
                 </button>
@@ -1960,6 +2648,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           </div>
         )}
+
 
         {/* Modal: Coupon Add/Edit */}
         {editingCoupon && (

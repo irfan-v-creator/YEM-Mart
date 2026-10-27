@@ -275,6 +275,35 @@ export const api = {
     return saved;
   },
 
+  async suggestProductDetails(params: {
+    name: string;
+    category: string;
+    brand?: string;
+    description?: string;
+    existingSpecs?: Record<string, string>;
+    existingHighlights?: string[];
+  }): Promise<{
+    success: boolean;
+    aiAvailable: boolean;
+    source: string;
+    suggestedDescription?: string;
+    suggestedShortSummary?: string;
+    highlights: Array<{ text: string; isUncertain: boolean; uncertainNote?: string }>;
+    specs: Array<{ key: string; value: string; isUncertain: boolean; uncertainNote?: string }>;
+  }> {
+    const res = await fetch('/api/admin/suggest-product-details', {
+      method: 'POST',
+      headers: getAdminHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to suggest product details');
+    }
+    return res.json();
+  },
+
   async deleteProduct(id: string, actor = 'Admin'): Promise<void> {
     const res = await fetch(`/api/products/${id}`, {
       method: 'DELETE',

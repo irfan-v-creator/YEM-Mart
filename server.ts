@@ -9,7 +9,8 @@ import * as argon2 from '@node-rs/argon2';
 import bcrypt from 'bcryptjs';
 import { store } from './server/store.js';
 import { isSupabaseConfigured, getSupabaseClient } from './server/supabase.js';
-import type { Product } from './src/types/index.js';
+import type { Product, Category } from './src/types/index.js';
+import { CATEGORY_SUGGESTED_SPECS } from './src/utils/categorySpecs.js';
 
 dotenv.config();
 
@@ -835,6 +836,149 @@ app.post('/api/products/bulk-import', requireOwnerOrManager, async (req, res) =>
   }
   const result = await store.bulkImportProducts(rows, actor);
   res.json(result);
+});
+
+// Admin-only truthful AI & category-template suggestions for product highlights & specifications
+app.post('/api/admin/suggest-product-details', requireAdminAuth, async (req, res) => {
+  try {
+    const { name, category, brand, description } = req.body;
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Product name is required' });
+    }
+
+    const cat = (category || 'Others') as Category;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      // Fallback template suggestions when no AI key configured
+      const suggestedSpecs = (CATEGORY_SUGGESTED_SPECS[cat] || []).map((f) => ({
+        key: f.key,
+        value: '',
+        isUncertain: true,
+        uncertainNote: `Please enter verified ${f.label.toLowerCase()} for this item`,
+      }));
+
+      return res.json({
+        success: true,
+        aiAvailable: false,
+        source: 'category_template',
+        suggestedDescription: description || '',
+        suggestedShortSummary: '',
+        highlights: [
+          {
+            text: `Authentic ${cat} collection curated for YEM MART Kerala customers`,
+            isUncertain: true,
+            uncertainNote: 'Template placeholder — please add specific product features',
+          },
+        ],
+        specs: suggestedSpecs,
+      });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const systemPrompt = `You are an honest, strict, truthful retail product data specialist for YEM MART Kerala.
+Your role is to extract or suggest Key Highlights (concise bullet points) and structured Specifications (label/value pairs) based ONLY on facts in the provided product title, brand, category, and description.
+
+CRITICAL TRUTHFULNESS & ANTI-HALLUCINATION RULES:
+1. NEVER invent material, weight, dimensions, capacity, warranty period, certifications, quality guarantees, medical/health benefits, or safety claims.
+2. NEVER assume product attributes from the name alone unless explicitly self-evident (e.g. if the title is "10-inch Cast Iron Skillet", diameter is 10 inches and material is Cast Iron; but do NOT guess its weight or warranty if unstated).
+3. If an attribute (e.g. Dimensions, Care Instructions, Battery Life, Warranty) is NOT explicitly mentioned or cannot be reliably verified from the supplied text, either omit it or mark it with isUncertain: true and an uncertainNote: "Merchant verification required".
+4. Mark ANY suggestion that requires merchant confirmation or supplier verification with "isUncertain": true and "uncertainNote": "<brief explanation>".
+5. Do NOT invent customer ratings, reviews, or fake awards.
+6. Provide output in JSON:
+{
+  "suggestedDescription": "Truthful 1-2 paragraph description based on supplied facts",
+  "suggestedShortSummary": "Truthful 1-sentence summary",
+  "highlights": [
+    { "text": "Feature or benefit supported by text", "isUncertain": false, "uncertainNote": "" }
+  ],
+  "specs": [
+    { "key": "Specification Label", "value": "Specification Value", "isUncertain": false, "uncertainNote": "" }
+  ]
+}`;
+
+    const prompt = `Product Information:
+Name: ${name}
+Category: ${cat}
+Brand: ${brand || 'YEM MART'}
+Existing Description: ${description || 'None provided'}
+
+Generate truthful highlights and specifications according to the instructions.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        systemInstruction: systemPrompt,
+      },
+    });
+
+    const text = response.text || '{}';
+    let parsed: any = {};
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = {};
+    }
+
+    const highlights = Array.isArray(parsed.highlights)
+      ? parsed.highlights
+          .map((h: any) => ({
+            text: typeof h === 'string' ? h : String(h.text || ''),
+            isUncertain: Boolean(h.isUncertain),
+            uncertainNote: h.uncertainNote || (h.isUncertain ? 'Requires merchant verification' : ''),
+          }))
+          .filter((h: any) => h.text.trim().length > 0)
+      : [];
+
+    const specs = Array.isArray(parsed.specs)
+      ? parsed.specs
+          .map((s: any) => ({
+            key: String(s.key || '').trim(),
+            value: String(s.value || '').trim(),
+            isUncertain: Boolean(s.isUncertain),
+            uncertainNote: s.uncertainNote || (s.isUncertain ? 'Requires merchant verification' : ''),
+          }))
+          .filter((s: any) => s.key.length > 0 && s.value.length > 0)
+      : [];
+
+    return res.json({
+      success: true,
+      aiAvailable: true,
+      source: 'gemini',
+      suggestedDescription: parsed.suggestedDescription || description || '',
+      suggestedShortSummary: parsed.suggestedShortSummary || '',
+      highlights,
+      specs,
+    });
+  } catch (err: any) {
+    console.error('Error generating product suggestions:', err);
+    // On API failure, return fallback template suggestions rather than breaking
+    const cat = (req.body?.category || 'Others') as Category;
+    const suggestedSpecs = (CATEGORY_SUGGESTED_SPECS[cat] || []).map((f) => ({
+      key: f.key,
+      value: '',
+      isUncertain: true,
+      uncertainNote: `Please enter verified ${f.label.toLowerCase()} for this item`,
+    }));
+
+    return res.json({
+      success: true,
+      aiAvailable: false,
+      source: 'category_template',
+      suggestedDescription: req.body?.description || '',
+      suggestedShortSummary: '',
+      highlights: [
+        {
+          text: `Curated ${cat} product for YEM MART Kerala customers`,
+          isUncertain: true,
+          uncertainNote: 'Template placeholder — please add specific product features',
+        },
+      ],
+      specs: suggestedSpecs,
+    });
+  }
 });
 
 // --- CART VALIDATION API (TRUSTED SERVER-SIDE, RATE-LIMITED) ---

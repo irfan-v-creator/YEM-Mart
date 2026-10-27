@@ -25,6 +25,7 @@ import {
 import { getSupabaseClient, isSupabaseConfigured } from './supabase.js';
 import { normalizeProductImageUrl } from '../src/utils/imageUrl.js';
 import { generateNextSku, getCategorySkuPrefix } from '../src/utils/sku.js';
+import { sanitizeHighlights, sanitizeSpecs } from '../src/utils/categorySpecs.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -585,8 +586,12 @@ class Store {
       category: product.category,
       description: product.description ?? existing?.description ?? '',
       shortSummary: product.shortSummary ?? existing?.shortSummary ?? product.description?.slice(0, 100) ?? '',
-      highlights: product.highlights && product.highlights.length > 0 ? product.highlights : (existing?.highlights ?? []),
-      specs: product.specs ?? existing?.specs ?? {},
+      highlights: product.highlights !== undefined
+        ? sanitizeHighlights(product.highlights)
+        : (existing?.highlights ? sanitizeHighlights(existing.highlights) : []),
+      specs: product.specs !== undefined
+        ? sanitizeSpecs(product.specs)
+        : (existing?.specs ? sanitizeSpecs(existing.specs) : {}),
       price: Number(product.price),
       originalPrice: product.originalPrice !== undefined && product.originalPrice !== null ? Number(product.originalPrice) : existing?.originalPrice,
       discountPercent: product.discountPercent !== undefined ? product.discountPercent : existing?.discountPercent,

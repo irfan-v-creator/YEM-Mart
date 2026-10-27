@@ -17,6 +17,7 @@ import {
 import { Product, ProductVariant, CartItem } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
+import { ProductHighlightsAndSpecs } from './ProductHighlightsAndSpecs';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -376,39 +377,11 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 </div>
               )}
 
-              {/* Highlights Bullet Points */}
-              {Array.isArray(product.highlights) && product.highlights.filter(h => Boolean(h && h.trim())).length > 0 && (
-                <div className="mt-6 border-t border-[#E7E5E0] pt-4">
-                  <h3 className="text-xs font-bold text-neutral-700 uppercase tracking-wider mb-2">
-                    Key Highlights
-                  </h3>
-                  <ul className="space-y-1.5 text-xs text-neutral-600">
-                    {product.highlights.filter(h => Boolean(h && h.trim())).map((h, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                        <span>{h}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Specifications Table */}
-              {product.specs && Object.keys(product.specs).length > 0 && Object.values(product.specs).some(v => Boolean(v && String(v).trim())) && (
-                <div className="mt-4 border-t border-[#E7E5E0] pt-4">
-                  <h3 className="text-xs font-bold text-neutral-700 uppercase tracking-wider mb-2">
-                    Specifications
-                  </h3>
-                  <div className="bg-[#F7F6F2] rounded-xl p-3 divide-y divide-[#E7E5E0] text-xs">
-                    {Object.entries(product.specs).filter(([_, v]) => Boolean(v && String(v).trim())).map(([k, v]) => (
-                      <div key={k} className="py-1.5 flex justify-between gap-4">
-                        <span className="text-neutral-500 font-medium">{k}</span>
-                        <span className="text-[#171717] font-semibold text-right">{v}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Reusable Data-Driven Product Highlights and Specifications */}
+              <ProductHighlightsAndSpecs
+                product={product}
+                className="mt-6 border-t border-[#E7E5E0] pt-4"
+              />
             </div>
 
             {/* Bottom Sticky Action Bar */}
