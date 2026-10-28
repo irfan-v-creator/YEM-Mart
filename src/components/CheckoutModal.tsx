@@ -13,9 +13,17 @@ import {
   Lock,
   ArrowLeft,
   Info,
-  RefreshCw
+  RefreshCw,
+  User,
+  Star,
+  Plus,
+  Home,
+  Briefcase,
+  Tag,
+  MapPin
 } from 'lucide-react';
-import { CartItem, CustomerDetails, Order, StoreSettings } from '../types';
+
+import { CartItem, CustomerDetails, Order, StoreSettings, CustomerUser, SavedAddress } from '../types';
 import { 
   formatCurrency, 
   generateOrderId, 
@@ -36,6 +44,10 @@ interface CheckoutModalProps {
   onOrderCreated: (order: Order) => void;
   onClearCart: () => void;
   onOpenTrackingWithId?: (orderId: string, phone: string) => void;
+  customer?: CustomerUser | null;
+  savedAddresses?: SavedAddress[];
+  onSaveNewAddress?: (address: Partial<SavedAddress>) => Promise<void>;
+  onOpenAuth?: () => void;
 }
 
 export const CheckoutModal: React.FC<CheckoutModalProps> = ({
@@ -48,7 +60,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   onOrderCreated,
   onClearCart,
   onOpenTrackingWithId,
+  customer,
+  savedAddresses = [],
+  onSaveNewAddress,
+  onOpenAuth,
 }) => {
+
   const [step, setStep] = useState<'details' | 'whatsapp'>('details');
 
   // Customer Form State
@@ -64,6 +81,49 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const clientOrderIdRef = useRef<string | null>(null);
 
+  // Saved Address Integration
+  const [selectedAddressId, setSelectedAddressId] = useState<string>('new');
+  const [saveToAccount, setSaveToAccount] = useState(false);
+
+  useEffect(() => {
+    if (customer && savedAddresses && savedAddresses.length > 0) {
+      const defaultAddr = savedAddresses.find((a) => a.isDefault) || savedAddresses[0];
+      setSelectedAddressId(defaultAddr.id);
+      setFullName(defaultAddr.fullName || '');
+      setPhone(defaultAddr.phone || '');
+      setAddress(defaultAddr.address || '');
+      setPincode(defaultAddr.pincode || '');
+      setDistrict((defaultAddr.district as KeralaDistrict) || 'Ernakulam');
+      setLandmark(defaultAddr.landmark || '');
+    } else if (customer) {
+      setSelectedAddressId('new');
+      if (customer.fullName && !fullName) setFullName(customer.fullName);
+      if (customer.phone && !phone) setPhone(customer.phone);
+    }
+  }, [customer, savedAddresses, isOpen]);
+
+  const handleSelectSavedAddress = (addr: SavedAddress) => {
+    setSelectedAddressId(addr.id);
+    setFullName(addr.fullName || '');
+    setPhone(addr.phone || '');
+    setAddress(addr.address || '');
+    setPincode(addr.pincode || '');
+    setDistrict((addr.district as KeralaDistrict) || 'Ernakulam');
+    setLandmark(addr.landmark || '');
+    setFormErrors({});
+  };
+
+  const handleSelectNewAddress = () => {
+    setSelectedAddressId('new');
+    setFullName(customer?.fullName || '');
+    setPhone(customer?.phone || '');
+    setAddress('');
+    setPincode('');
+    setDistrict('Ernakulam');
+    setLandmark('');
+    setFormErrors({});
+  };
+
   // Snapshot of items at checkout initiation so that onClearCart() does not wipe WhatsApp items
   const [checkoutItemsSnapshot, setCheckoutItemsSnapshot] = useState<CartItem[]>(items);
 
@@ -72,6 +132,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setCheckoutItemsSnapshot(items);
     }
   }, [items, step]);
+
 
   // Created Order State
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
@@ -163,9 +224,25 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       clientOrderIdRef.current = null;
       setCreatedOrder(serverOrder);
       onOrderCreated(serverOrder);
+
+      // If customer requested saving this new address, dispatch to background
+      if (saveToAccount && selectedAddressId === 'new' && onSaveNewAddress && customer) {
+        onSaveNewAddress({
+          fullName: fullName.trim(),
+          phone: phone.trim(),
+          address: address.trim(),
+          pincode: pincode.trim(),
+          district,
+          landmark: landmark.trim() || undefined,
+          label: 'Home',
+          isDefault: savedAddresses.length === 0,
+        }).catch((err) => console.warn('Could not save address to account:', err));
+      }
+
       onClearCart();
       setStep('whatsapp');
     } catch (err: any) {
+
       console.error('Order creation error:', err);
       const msg = err?.message || 'Unable to place order right now. Your cart is preserved. Please retry.';
       setSubmissionError(msg);
@@ -257,6 +334,91 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         {/* Step 1: Delivery Details Form */}
         {step === 'details' && (
           <div className="p-6 sm:p-8 space-y-6">
+            {/* Authenticated Customer Saved Addresses Selector */}
+            {customer && savedAddresses && savedAddresses.length > 0 ? (
+              <div className="p-4 rounded-2xl bg-amber-50/40 border border-[#C9A44C]/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <MapPin className="w-4 h-4 text-[#C9A44C]" />
+                    <span className="text-xs font-extrabold text-[#171717] uppercase tracking-wider">
+                      Select Delivery Address
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-[#C9A44C] font-bold">
+                    Logged in as {customer.fullName || customer.email}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {savedAddresses.map((addr) => {
+                    const isSelected = selectedAddressId === addr.id;
+                    return (
+                      <div
+                        key={addr.id}
+                        onClick={() => handleSelectSavedAddress(addr)}
+                        className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-white border-[#C9A44C] ring-2 ring-[#C9A44C]/30 shadow-xs'
+                            : 'bg-white/70 border-[#E7E5E0] hover:border-neutral-400'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-neutral-100 text-neutral-700">
+                            {addr.label}
+                          </span>
+                          {addr.isDefault && (
+                            <span className="text-[10px] font-bold text-[#C9A44C] flex items-center gap-0.5">
+                              <Star className="w-3 h-3 fill-current" /> Default
+                            </span>
+                          )}
+                        </div>
+                        <p className="font-bold text-xs text-[#171717] truncate">{addr.fullName}</p>
+                        <p className="text-[11px] text-neutral-600 line-clamp-1">{addr.address}</p>
+                        <p className="text-[11px] text-neutral-500 font-medium">
+                          {addr.district} — {addr.pincode}
+                        </p>
+                      </div>
+                    );
+                  })}
+
+                  {/* Option to enter a different address */}
+                  <div
+                    onClick={handleSelectNewAddress}
+                    className={`p-3 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-center items-center ${
+                      selectedAddressId === 'new'
+                        ? 'bg-white border-[#171717] ring-2 ring-neutral-400 shadow-xs'
+                        : 'bg-white/50 border-dashed border-[#E7E5E0] hover:border-neutral-400 text-neutral-600'
+                    }`}
+                  >
+                    <Plus className="w-4 h-4 mb-0.5" />
+                    <span className="text-xs font-bold text-[#171717]">Deliver to Different Address</span>
+                    <span className="text-[10px] text-neutral-400">Enter custom recipient details</span>
+                  </div>
+                </div>
+              </div>
+            ) : !customer ? (
+              /* Guest Checkout Notice with Sign In Link */
+              <div className="p-3.5 rounded-2xl bg-[#F7F6F2] border border-[#E7E5E0] flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4 text-neutral-500" />
+                  <span className="text-neutral-700">
+                    Have a YEM MART account?{' '}
+                    {onOpenAuth && (
+                      <button
+                        type="button"
+                        onClick={onOpenAuth}
+                        className="font-bold text-[#C9A44C] hover:underline"
+                      >
+                        Sign In
+                      </button>
+                    )}{' '}
+                    to use your saved addresses.
+                  </span>
+                </div>
+                <span className="text-[10px] uppercase font-bold text-neutral-400">Guest Checkout</span>
+              </div>
+            ) : null}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Full Name */}
               <div>
@@ -266,7 +428,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <input
                   type="text"
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  onChange={(e) => {
+                    setFullName(e.target.value);
+                    if (selectedAddressId !== 'new') setSelectedAddressId('new');
+                  }}
                   placeholder="e.g. Rahul Menon"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-[#E7E5E0] focus:border-[#C9A44C] outline-none text-sm"
                 />
@@ -274,6 +439,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <p className="text-xs text-red-500 mt-1">{formErrors.fullName}</p>
                 )}
               </div>
+
 
               {/* Phone Number */}
               <div>
@@ -399,7 +565,23 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
             </div>
 
+            {/* Save address to account toggle if customer is logged in */}
+            {customer && selectedAddressId === 'new' && (
+              <label className="flex items-center gap-2.5 p-3 rounded-xl bg-amber-50/50 border border-[#C9A44C]/30 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={saveToAccount}
+                  onChange={(e) => setSaveToAccount(e.target.checked)}
+                  className="w-4 h-4 rounded text-[#171717] focus:ring-[#C9A44C] accent-[#171717]"
+                />
+                <span className="text-xs font-semibold text-neutral-800">
+                  Save this address to my YEM MART account for future orders
+                </span>
+              </label>
+            )}
+
             {/* Order Breakdown Box */}
+
             <div className="bg-[#F7F6F2] rounded-2xl p-4 border border-[#E7E5E0] space-y-2 text-xs">
               <h4 className="font-bold text-[#171717] uppercase tracking-wider mb-1">
                 Order Review ({items.reduce((s, i) => s + i.quantity, 0)} Items)

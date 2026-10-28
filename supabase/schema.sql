@@ -257,7 +257,41 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, an
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- 11. ROW LEVEL SECURITY (RLS) POLICIES
+-- ----------------------------------------------------------------------------
+-- 10. CUSTOMER ADDRESSES TABLE (AUTHENTICATED CUSTOMER SAVED ADDRESSES)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS customer_addresses (
+    id VARCHAR(100) PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    name VARCHAR(150) NOT NULL,
+    phone VARCHAR(20) NOT NULL,
+    address TEXT NOT NULL,
+    landmark TEXT,
+    district VARCHAR(100) NOT NULL,
+    pincode VARCHAR(10) NOT NULL,
+    label VARCHAR(30) NOT NULL DEFAULT 'Home' CHECK (label IN ('Home', 'Work', 'Other')),
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_addresses_user_id ON customer_addresses(user_id);
+CREATE INDEX IF NOT EXISTS idx_customer_addresses_user_default ON customer_addresses(user_id, is_default);
+
+-- ----------------------------------------------------------------------------
+-- 11. ROLE PERMISSIONS & GRANTS (CRITICAL FOR SUPABASE SERVICE_ROLE & ANON)
+-- ----------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- 12. ROW LEVEL SECURITY (RLS) POLICIES
 -- ----------------------------------------------------------------------------
 ALTER TABLE store_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
@@ -268,6 +302,7 @@ ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_status_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stock_adjustment_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customer_addresses ENABLE ROW LEVEL SECURITY;
 
 -- Public storefront read access
 DROP POLICY IF EXISTS "Public can view store settings" ON store_settings;
@@ -282,8 +317,26 @@ CREATE POLICY "Public can view variants" ON product_variants FOR SELECT USING (t
 DROP POLICY IF EXISTS "Public can view active coupons" ON coupons;
 CREATE POLICY "Public can view active coupons" ON coupons FOR SELECT USING (is_active = true);
 
+-- Customer Addresses RLS: Customers can only manage their own addresses
+DROP POLICY IF EXISTS "Customers can select own addresses" ON customer_addresses;
+CREATE POLICY "Customers can select own addresses" ON customer_addresses 
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Customers can insert own addresses" ON customer_addresses;
+CREATE POLICY "Customers can insert own addresses" ON customer_addresses 
+  FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Customers can update own addresses" ON customer_addresses;
+CREATE POLICY "Customers can update own addresses" ON customer_addresses 
+  FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Customers can delete own addresses" ON customer_addresses;
+CREATE POLICY "Customers can delete own addresses" ON customer_addresses 
+  FOR DELETE TO authenticated USING (auth.uid() = user_id);
+
 -- Service Role Key (Backend Server) has full bypass privileges natively,
 -- and the above GRANT statements ensure complete access across all tables.
 
 -- Reload PostgREST schema cache to ensure new columns and grants take effect immediately
 NOTIFY pgrst, 'reload schema';
+

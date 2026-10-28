@@ -210,3 +210,28 @@ export interface ChatMessage {
   timestamp: string;
   searchGrounding?: Array<{ title: string; url: string }>;
 }
+
+export type AddressLabel = 'Home' | 'Work' | 'Other';
+
+export interface SavedAddress {
+  id: string;
+  userId: string;
+  fullName: string;
+  phone: string;
+  address: string;
+  landmark?: string;
+  district: string;
+  pincode: string;
+  label: AddressLabel;
+  isDefault: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CustomerUser {
+  id: string;
+  email: string;
+  fullName?: string;
+  phone?: string;
+}
+

@@ -1,7 +1,9 @@
-import { Product, Order, StoreSettings, Coupon, AuditLog, StockAdjustmentLog, CustomerDetails, OrderStatus } from '../types';
+import { Product, Order, StoreSettings, Coupon, AuditLog, StockAdjustmentLog, CustomerDetails, OrderStatus, SavedAddress } from '../types';
+import { getCustomerAuthToken } from './supabaseClient';
 
 // Safe multi-tier token persistence (In-memory -> SessionStorage -> LocalStorage -> Cookie)
 let currentAdminToken = '';
+
 
 function safeGetStorage(key: string): string {
   try {
@@ -63,6 +65,19 @@ function getAdminHeaders(): Record<string, string> {
   }
   return headers;
 }
+
+async function getCustomerHeaders(): Promise<Record<string, string>> {
+  const token = await getCustomerAuthToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 
 export function extractErrorMessage(err: any, fallback = 'Invalid admin passkey or unauthorized role.'): string {
   if (!err) return fallback;
@@ -573,5 +588,71 @@ export const api = {
     if (!res.ok) throw new Error('Failed to fetch stock logs');
     return res.json();
   },
+
+  // Customer Saved Addresses
+  async getCustomerAddresses(): Promise<SavedAddress[]> {
+    const headers = await getCustomerHeaders();
+    const res = await fetch('/api/customer/addresses', { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to fetch saved addresses');
+    }
+    return res.json();
+  },
+
+  async createCustomerAddress(address: Partial<SavedAddress>): Promise<SavedAddress> {
+    const headers = await getCustomerHeaders();
+    const res = await fetch('/api/customer/addresses', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(address),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to save address');
+    }
+    return res.json();
+  },
+
+  async updateCustomerAddress(id: string, address: Partial<SavedAddress>): Promise<SavedAddress> {
+    const headers = await getCustomerHeaders();
+    const res = await fetch(`/api/customer/addresses/${id}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(address),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update address');
+    }
+    return res.json();
+  },
+
+  async deleteCustomerAddress(id: string): Promise<boolean> {
+    const headers = await getCustomerHeaders();
+    const res = await fetch(`/api/customer/addresses/${id}`, {
+      method: 'DELETE',
+      headers,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to delete address');
+    }
+    return true;
+  },
+
+  async setDefaultCustomerAddress(id: string): Promise<SavedAddress> {
+    const headers = await getCustomerHeaders();
+    const res = await fetch(`/api/customer/addresses/${id}/default`, {
+      method: 'PUT',
+      headers,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to set default address');
+    }
+    return res.json();
+  },
 };
+
 

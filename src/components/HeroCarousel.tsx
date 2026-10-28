@@ -1,19 +1,23 @@
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight, Sparkles, ArrowRight, ShieldCheck, Truck, MessageCircle } from 'lucide-react';
 import { HeroBanner, Category } from '../types';
+import { formatWhatsAppUrl } from '../utils/formatters';
 
 interface HeroCarouselProps {
   banners: HeroBanner[];
   onSelectCategory: (category: Category | 'All') => void;
-  onOpenChat: () => void;
+  onOpenChat?: () => void;
+  whatsappNumber?: string;
 }
 
 export const HeroCarousel: React.FC<HeroCarouselProps> = ({
   banners,
   onSelectCategory,
   onOpenChat,
+  whatsappNumber = '917510447887',
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
+
 
   if (!banners || banners.length === 0) return null;
 
@@ -70,13 +74,17 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
               <span>{currentBanner.ctaText}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-            <button
-              onClick={onOpenChat}
-              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-sm backdrop-blur-sm border border-white/20 transition-all flex items-center gap-2"
+            <a
+              href={formatWhatsAppUrl(whatsappNumber, `Hi YEM MART, I am browsing "${currentBanner.title}" and would like assistance!`)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-emerald-600/30 text-white font-medium text-sm backdrop-blur-sm border border-white/20 hover:border-emerald-500/40 transition-all flex items-center gap-2"
             >
-              <span>Ask YEM Assistant</span>
-            </button>
+              <MessageCircle className="w-4 h-4 text-emerald-400" />
+              <span>Chat on WhatsApp</span>
+            </a>
           </div>
+
         </div>
 
         {/* Carousel Navigation Arrows & Dots */}

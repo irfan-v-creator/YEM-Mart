@@ -12,12 +12,14 @@ import {
   ChevronUp,
   Share2,
   Package,
-  Zap
+  Zap,
+  MessageCircle
 } from 'lucide-react';
 import { Product, ProductVariant, CartItem } from '../types';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatWhatsAppUrl } from '../utils/formatters';
 import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 import { ProductHighlightsAndSpecs } from './ProductHighlightsAndSpecs';
+
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -203,25 +205,27 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
               </div>
             )}
 
-            {/* AI Assistant Question Prompt */}
-            {onOpenChatWithQuery && (
-              <div className="bg-amber-50/70 border border-[#C9A44C]/30 p-3.5 rounded-xl flex items-center justify-between text-xs">
-                <div>
-                  <p className="font-bold text-amber-950">Have questions about this item?</p>
-                  <p className="text-amber-800 text-[11px]">Ask our Kerala Shopping Assistant in English or Malayalam!</p>
-                </div>
-                <button
-                  onClick={() => {
-                    onClose();
-                    onOpenChatWithQuery(`Can you tell me more about ${product.name} (${product.brand})?`);
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-[#C9A44C] text-[#171717] font-bold text-xs hover:bg-[#d8b55e] transition-colors shrink-0"
-                >
-                  Ask Assistant
-                </button>
+            {/* WhatsApp Product Enquiry Prompt */}
+            <div className="bg-emerald-50/80 border border-emerald-200 p-3.5 rounded-xl flex items-center justify-between text-xs">
+              <div>
+                <p className="font-bold text-emerald-950">Have questions about this item?</p>
+                <p className="text-emerald-800 text-[11px]">Chat with our Kerala store support directly on WhatsApp!</p>
               </div>
-            )}
+              <a
+                href={formatWhatsAppUrl(
+                  whatsappNumber || '917510447887',
+                  `Hi YEM MART, I have an enquiry about "${product.name}" (SKU: ${currentSku}). Is this available for delivery in Kerala?`
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shrink-0 flex items-center gap-1.5 shadow-xs"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>Enquire on WhatsApp</span>
+              </a>
+            </div>
           </div>
+
 
           {/* Product Info Section */}
           <div className="flex flex-col justify-between">

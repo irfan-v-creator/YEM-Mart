@@ -12,9 +12,10 @@ import {
   ExternalLink,
   ChevronDown,
   PackageCheck,
-  Package
+  Package,
+  User
 } from 'lucide-react';
-import { Product, Category, StoreSettings } from '../types';
+import { Product, Category, StoreSettings, CustomerUser } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG } from '../utils/imageUrl';
 
@@ -31,12 +32,16 @@ interface HeaderProps {
   onOpenCart: () => void;
   wishlistCount: number;
   onOpenWishlist: () => void;
-  onOpenChat: () => void;
+  onOpenChat?: () => void;
   onOpenTracking: () => void;
   isAdminOpen?: boolean;
   onToggleAdmin?: () => void;
   onScrollToShop: () => void;
+  customer?: CustomerUser | null;
+  onOpenCustomerAccount?: () => void;
+  onOpenAuth?: () => void;
 }
+
 
 const CATEGORIES: Category[] = [
   'Fashion',
@@ -64,8 +69,12 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenWishlist,
   onOpenChat,
   onOpenTracking,
-  onScrollToShop
+  onScrollToShop,
+  customer,
+  onOpenCustomerAccount,
+  onOpenAuth,
 }) => {
+
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -206,15 +215,24 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Gemini AI Assistant Button */}
+          {/* Customer Account Entry Button */}
           <button
-            onClick={onOpenChat}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-900 border border-[#C9A44C]/30 hover:bg-[#C9A44C]/10 text-xs sm:text-sm font-medium transition-colors shadow-2xs"
-            title="Ask YEM Concierge with Google Search Grounding"
+            onClick={customer ? onOpenCustomerAccount : onOpenAuth}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 text-amber-950 border border-[#C9A44C]/30 hover:bg-[#C9A44C]/15 text-xs sm:text-sm font-semibold transition-all shadow-2xs active:scale-95 group"
+            title={customer ? `My Account (${customer.fullName || customer.email})` : 'Customer Sign In / Register'}
           >
-            <Sparkles className="w-4 h-4 text-[#C9A44C]" />
-            <span className="hidden sm:inline">AI Concierge</span>
+            <div className="w-5 h-5 rounded-lg bg-[#C9A44C] text-[#171717] flex items-center justify-center font-bold text-[11px] shrink-0">
+              {customer ? (
+                customer.fullName ? customer.fullName.charAt(0).toUpperCase() : <User className="w-3.5 h-3.5" />
+              ) : (
+                <User className="w-3.5 h-3.5" />
+              )}
+            </div>
+            <span className="hidden sm:inline truncate max-w-[110px]">
+              {customer ? (customer.fullName ? customer.fullName.split(' ')[0] : 'Account') : 'Account'}
+            </span>
           </button>
+
 
           {/* Wishlist Button */}
           <button

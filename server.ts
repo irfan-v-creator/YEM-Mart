@@ -9,8 +9,10 @@ import * as argon2 from '@node-rs/argon2';
 import bcrypt from 'bcryptjs';
 import { store } from './server/store.js';
 import { isSupabaseConfigured, getSupabaseClient } from './server/supabase.js';
-import type { Product, Category } from './src/types/index.js';
+import type { Product, Category, SavedAddress } from './src/types/index.js';
 import { CATEGORY_SUGGESTED_SPECS } from './src/utils/categorySpecs.js';
+import { ALL_KERALA_DISTRICTS, isKeralaPincode } from './src/data/initialData.js';
+
 
 dotenv.config();
 
@@ -622,7 +624,37 @@ const requireOwnerOrManager = (req: express.Request, res: express.Response, next
   next();
 };
 
+// Customer authentication middleware (Decoupled from Admin; verifies Supabase customer JWT)
+const requireCustomerAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Customer authentication required: missing Bearer token' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Customer authentication required: empty token' });
+  }
+
+  try {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (error || !user) {
+        return res.status(401).json({ error: 'Invalid or expired customer session token' });
+      }
+      (req as any).customer = user;
+      return next();
+    }
+  } catch (err) {
+    console.error('Customer auth token verification error:', err);
+  }
+
+  return res.status(401).json({ error: 'Customer authentication verification failed' });
+};
+
 // --- IN-MEMORY RATE LIMITER HELPER ---
+
 function rateLimit(options: { windowMs: number; max: number; message?: string }) {
   const hits = new Map<string, { count: number; resetAt: number }>();
   setInterval(() => {
@@ -1086,7 +1118,147 @@ app.post('/api/inventory/adjust', requireOwnerOrManager, async (req, res) => {
   res.json({ success: true });
 });
 
+// --- CUSTOMER CONFIG (SAFE PUBLIC SUPABASE KEYS ONLY) ---
+app.get('/api/customer/config', (req, res) => {
+  res.json({
+    supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '',
+    supabaseAnonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '',
+  });
+});
+
+// --- CUSTOMER SAVED ADDRESSES API (AUTHENTICATED CUSTOMERS ONLY) ---
+app.get('/api/customer/addresses', requireCustomerAuth, async (req, res) => {
+  try {
+    const userId = (req as any).customer.id;
+    const addresses = await store.getCustomerAddresses(userId);
+    res.json(addresses);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch saved addresses' });
+  }
+});
+
+app.post('/api/customer/addresses', requireCustomerAuth, async (req, res) => {
+  try {
+    const userId = (req as any).customer.id;
+    const { fullName, phone, address, landmark, district, pincode, label = 'Home', isDefault = false } = req.body;
+
+    if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+      return res.status(400).json({ error: 'Recipient full name is required' });
+    }
+    const cleanPhone = String(phone || '').trim();
+    if (!cleanPhone || !/^[6-9]\d{9}$/.test(cleanPhone)) {
+      return res.status(400).json({ error: 'Valid 10-digit mobile number starting with 6-9 is required' });
+    }
+    if (!address || typeof address !== 'string' || !address.trim()) {
+      return res.status(400).json({ error: 'Delivery address is required' });
+    }
+    if (!district || !ALL_KERALA_DISTRICTS.includes(district as any)) {
+      return res.status(400).json({ error: 'Please select a valid Kerala district' });
+    }
+    const cleanPincode = String(pincode || '').trim();
+    if (!cleanPincode || !isKeralaPincode(cleanPincode)) {
+      return res.status(400).json({ error: 'Valid 6-digit Kerala PIN code (starting with 67, 68, or 69) is required' });
+    }
+    const validLabels = ['Home', 'Work', 'Other'];
+    const cleanLabel = validLabels.includes(label) ? label : 'Home';
+
+    const newAddress: SavedAddress = {
+      id: 'addr_' + Date.now().toString(36) + '_' + crypto.randomBytes(4).toString('hex'),
+      userId,
+      fullName: fullName.trim(),
+      phone: cleanPhone,
+      address: address.trim(),
+      landmark: landmark && typeof landmark === 'string' ? landmark.trim() : undefined,
+      district,
+      pincode: cleanPincode,
+      label: cleanLabel as any,
+      isDefault: Boolean(isDefault),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const saved = await store.saveCustomerAddress(newAddress);
+    res.status(201).json(saved);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to save address' });
+  }
+});
+
+app.put('/api/customer/addresses/:id', requireCustomerAuth, async (req, res) => {
+  try {
+    const userId = (req as any).customer.id;
+    const { id } = req.params;
+    const existingList = await store.getCustomerAddresses(userId);
+    const existing = existingList.find((a) => a.id === id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Address not found or unauthorized' });
+    }
+
+    const { fullName, phone, address, landmark, district, pincode, label, isDefault } = req.body;
+
+    const updatedAddress: SavedAddress = {
+      ...existing,
+      fullName: fullName !== undefined ? String(fullName).trim() : existing.fullName,
+      phone: phone !== undefined ? String(phone).trim() : existing.phone,
+      address: address !== undefined ? String(address).trim() : existing.address,
+      landmark: landmark !== undefined ? (landmark ? String(landmark).trim() : undefined) : existing.landmark,
+      district: district !== undefined ? district : existing.district,
+      pincode: pincode !== undefined ? String(pincode).trim() : existing.pincode,
+      label: label !== undefined ? label : existing.label,
+      isDefault: isDefault !== undefined ? Boolean(isDefault) : existing.isDefault,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (!updatedAddress.fullName) {
+      return res.status(400).json({ error: 'Recipient full name is required' });
+    }
+    if (!/^[6-9]\d{9}$/.test(updatedAddress.phone)) {
+      return res.status(400).json({ error: 'Valid 10-digit mobile number is required' });
+    }
+    if (!updatedAddress.address) {
+      return res.status(400).json({ error: 'Delivery address is required' });
+    }
+    if (!ALL_KERALA_DISTRICTS.includes(updatedAddress.district as any)) {
+      return res.status(400).json({ error: 'Please select a valid Kerala district' });
+    }
+    if (!isKeralaPincode(updatedAddress.pincode)) {
+      return res.status(400).json({ error: 'Valid 6-digit Kerala PIN code (starting with 67, 68, or 69) is required' });
+    }
+
+    const saved = await store.saveCustomerAddress(updatedAddress);
+    res.json(saved);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to update address' });
+  }
+});
+
+app.delete('/api/customer/addresses/:id', requireCustomerAuth, async (req, res) => {
+  try {
+    const userId = (req as any).customer.id;
+    const { id } = req.params;
+    const success = await store.deleteCustomerAddress(userId, id);
+    res.json({ success, message: 'Address deleted successfully' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to delete address' });
+  }
+});
+
+app.put('/api/customer/addresses/:id/default', requireCustomerAuth, async (req, res) => {
+  try {
+    const userId = (req as any).customer.id;
+    const { id } = req.params;
+    const updated = await store.setDefaultCustomerAddress(userId, id);
+    if (!updated) {
+      return res.status(404).json({ error: 'Address not found or unauthorized' });
+    }
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to set default address' });
+  }
+});
+
 // --- SETTINGS API ---
+
 app.get('/api/settings', async (req, res) => {
   if (req.query.fresh === 'true' || req.query.fresh === '1' || Date.now() - store.getLastHydratedAt() > 30000) {
     await store.hydrateFromSupabase().catch(() => {});

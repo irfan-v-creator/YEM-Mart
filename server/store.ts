@@ -12,7 +12,8 @@ import type {
   CartItem, 
   CustomerDetails,
   OrderStatus,
-  PaymentStatus
+  PaymentStatus,
+  SavedAddress
 } from '../src/types/index.js';
 import { 
   INITIAL_PRODUCTS, 
@@ -42,7 +43,9 @@ export interface DatabaseSchema {
   coupons: Coupon[];
   auditLogs: AuditLog[];
   stockLogs: StockAdjustmentLog[];
+  customerAddresses?: SavedAddress[];
 }
+
 
 class Store {
   private data: DatabaseSchema;
@@ -105,6 +108,7 @@ class Store {
           coupons: Array.isArray(parsed.coupons) ? parsed.coupons : INITIAL_COUPONS,
           auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : INITIAL_AUDIT_LOGS,
           stockLogs: Array.isArray(parsed.stockLogs) ? parsed.stockLogs : INITIAL_STOCK_LOGS,
+          customerAddresses: Array.isArray(parsed.customerAddresses) ? parsed.customerAddresses : [],
         };
       }
     } catch (err) {
@@ -118,7 +122,9 @@ class Store {
       coupons: INITIAL_COUPONS,
       auditLogs: INITIAL_AUDIT_LOGS,
       stockLogs: INITIAL_STOCK_LOGS,
+      customerAddresses: [],
     };
+
     if (!isServerless) {
       this.saveDatabaseSync(defaultData);
     }
@@ -1406,6 +1412,196 @@ class Store {
   public getStockLogs(): StockAdjustmentLog[] {
     return [...this.data.stockLogs];
   }
+
+  // --- CUSTOMER ADDRESSES ---
+  public async getCustomerAddresses(userId: string): Promise<SavedAddress[]> {
+    if (!this.data.customerAddresses) this.data.customerAddresses = [];
+
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          const { data, error } = await supabase
+            .from('customer_addresses')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false });
+
+          if (!error && Array.isArray(data)) {
+            const list: SavedAddress[] = data.map((row: any) => ({
+              id: row.id,
+              userId: row.user_id,
+              fullName: row.name || row.full_name || '',
+              phone: row.phone || '',
+              address: row.address || '',
+              landmark: row.landmark || undefined,
+              district: row.district || '',
+              pincode: row.pincode || '',
+              label: (row.label as any) || 'Home',
+              isDefault: Boolean(row.is_default),
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+            }));
+            this.data.customerAddresses = [
+              ...this.data.customerAddresses.filter((a) => a.userId !== userId),
+              ...list,
+            ];
+            return list;
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase getCustomerAddresses error:', err);
+      }
+    }
+
+    return this.data.customerAddresses
+      .filter((a) => a.userId === userId)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+
+  public async saveCustomerAddress(address: SavedAddress): Promise<SavedAddress> {
+    if (!this.data.customerAddresses) this.data.customerAddresses = [];
+
+    // If this address is set as default, unset existing default addresses for this user
+    if (address.isDefault) {
+      this.data.customerAddresses.forEach((a) => {
+        if (a.userId === address.userId) a.isDefault = false;
+      });
+    }
+
+    const existingIdx = this.data.customerAddresses.findIndex(
+      (a) => a.id === address.id && a.userId === address.userId
+    );
+    if (existingIdx >= 0) {
+      this.data.customerAddresses[existingIdx] = { ...address, updatedAt: new Date().toISOString() };
+    } else {
+      const userAddresses = this.data.customerAddresses.filter((a) => a.userId === address.userId);
+      if (userAddresses.length === 0) {
+        address.isDefault = true;
+      }
+      this.data.customerAddresses.unshift(address);
+    }
+
+    this.saveDatabaseSync();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          if (address.isDefault) {
+            await supabase
+              .from('customer_addresses')
+              .update({ is_default: false })
+              .eq('user_id', address.userId);
+          }
+          await supabase
+            .from('customer_addresses')
+            .upsert({
+              id: address.id,
+              user_id: address.userId,
+              name: address.fullName,
+              phone: address.phone,
+              address: address.address,
+              landmark: address.landmark || null,
+              district: address.district,
+              pincode: address.pincode,
+              label: address.label,
+              is_default: address.isDefault,
+              updated_at: new Date().toISOString(),
+            });
+        }
+      } catch (err) {
+        console.warn('Supabase saveCustomerAddress error:', err);
+      }
+    }
+
+    return address;
+  }
+
+  public async deleteCustomerAddress(userId: string, addressId: string): Promise<boolean> {
+    if (!this.data.customerAddresses) this.data.customerAddresses = [];
+    const target = this.data.customerAddresses.find((a) => a.id === addressId && a.userId === userId);
+    const wasDefault = target?.isDefault;
+
+    this.data.customerAddresses = this.data.customerAddresses.filter(
+      (a) => !(a.id === addressId && a.userId === userId)
+    );
+
+    if (wasDefault) {
+      const remaining = this.data.customerAddresses.filter((a) => a.userId === userId);
+      if (remaining.length > 0) {
+        remaining[0].isDefault = true;
+      }
+    }
+
+    this.saveDatabaseSync();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          await supabase
+            .from('customer_addresses')
+            .delete()
+            .match({ id: addressId, user_id: userId });
+
+          if (wasDefault) {
+            const remaining = this.data.customerAddresses.filter((a) => a.userId === userId);
+            if (remaining.length > 0) {
+              await supabase
+                .from('customer_addresses')
+                .update({ is_default: true })
+                .match({ id: remaining[0].id, user_id: userId });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase deleteCustomerAddress error:', err);
+      }
+    }
+
+    return true;
+  }
+
+  public async setDefaultCustomerAddress(userId: string, addressId: string): Promise<SavedAddress | null> {
+    if (!this.data.customerAddresses) this.data.customerAddresses = [];
+    let found: SavedAddress | null = null;
+
+    this.data.customerAddresses.forEach((a) => {
+      if (a.userId === userId) {
+        if (a.id === addressId) {
+          a.isDefault = true;
+          found = a;
+        } else {
+          a.isDefault = false;
+        }
+      }
+    });
+
+    this.saveDatabaseSync();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          await supabase
+            .from('customer_addresses')
+            .update({ is_default: false })
+            .eq('user_id', userId);
+
+          await supabase
+            .from('customer_addresses')
+            .update({ is_default: true })
+            .match({ id: addressId, user_id: userId });
+        }
+      } catch (err) {
+        console.warn('Supabase setDefaultCustomerAddress error:', err);
+      }
+    }
+
+    return found;
+  }
 }
 
 export const store = new Store();
+

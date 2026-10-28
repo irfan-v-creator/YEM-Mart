@@ -49,6 +49,15 @@ import {
 import { 
   SeoStructuredData 
 } from './components/SeoStructuredData';
+import {
+  CustomerAuthModal
+} from './components/CustomerAuthModal';
+import {
+  CustomerAccountDrawer
+} from './components/CustomerAccountDrawer';
+import {
+  AddressFormModal
+} from './components/AddressFormModal';
 
 import { 
   Product, 
@@ -60,8 +69,13 @@ import {
   OrderStatus,
   Coupon,
   AuditLog,
-  StockAdjustmentLog
+  StockAdjustmentLog,
+  CustomerUser,
+  SavedAddress
 } from './types';
+import { subscribeToCustomerAuth, signOutCustomer } from './utils/supabaseClient';
+import { formatWhatsAppUrl } from './utils/formatters';
+
 import { 
   INITIAL_PRODUCTS, 
   INITIAL_SETTINGS, 
@@ -417,7 +431,79 @@ export default function App() {
   const [chatInitialQuery, setChatInitialQuery] = useState('');
   const [isAdminOpen, setIsAdminOpen] = useState(false);
 
+  // Customer Account & Saved Addresses State
+  const [customer, setCustomer] = useState<CustomerUser | null>(null);
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
+  const [isCustomerAuthModalOpen, setIsCustomerAuthModalOpen] = useState(false);
+  const [isCustomerAccountDrawerOpen, setIsCustomerAccountDrawerOpen] = useState(false);
+  const [isAddressFormModalOpen, setIsAddressFormModalOpen] = useState(false);
+  const [editingAddress, setEditingAddress] = useState<SavedAddress | null>(null);
+
+  const loadCustomerAddresses = useCallback(async () => {
+    try {
+      setIsLoadingAddresses(true);
+      const list = await api.getCustomerAddresses();
+      setSavedAddresses(list);
+    } catch (err) {
+      console.warn('Could not load saved addresses:', err);
+    } finally {
+      setIsLoadingAddresses(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToCustomerAuth((user) => {
+      setCustomer(user);
+      if (user) {
+        loadCustomerAddresses();
+      } else {
+        setSavedAddresses([]);
+      }
+    });
+    return () => unsubscribe();
+  }, [loadCustomerAddresses]);
+
+  const handleSaveAddress = async (addrData: Partial<SavedAddress>) => {
+    if (editingAddress) {
+      const updated = await api.updateCustomerAddress(editingAddress.id, addrData);
+      setSavedAddresses((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      showToast('Address updated successfully');
+    } else {
+      const created = await api.createCustomerAddress(addrData);
+      setSavedAddresses((prev) => [created, ...prev]);
+      showToast('Address saved to your account');
+    }
+    await loadCustomerAddresses();
+  };
+
+  const handleDeleteAddress = async (id: string) => {
+    await api.deleteCustomerAddress(id);
+    setSavedAddresses((prev) => prev.filter((a) => a.id !== id));
+    showToast('Address deleted');
+    await loadCustomerAddresses();
+  };
+
+  const handleSetDefaultAddress = async (id: string) => {
+    await api.setDefaultCustomerAddress(id);
+    setSavedAddresses((prev) =>
+      prev.map((a) => ({
+        ...a,
+        isDefault: a.id === id,
+      }))
+    );
+    showToast('Default delivery address updated');
+  };
+
+  const handleSignOutCustomer = async () => {
+    await signOutCustomer();
+    setCustomer(null);
+    setSavedAddresses([]);
+    showToast('Signed out of YEM MART account');
+  };
+
   // Toast notice
+
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const shopSectionRef = useRef<HTMLDivElement>(null);
@@ -987,21 +1073,22 @@ export default function App() {
           setIsMyOrdersOpen(true);
         }}
         onScrollToShop={scrollToShop}
+        customer={customer}
+        onOpenCustomerAccount={() => setIsCustomerAccountDrawerOpen(true)}
+        onOpenAuth={() => setIsCustomerAuthModalOpen(true)}
       />
 
       <main className="flex-1 pb-16">
         {/* 2. Compact Hero Promotional Carousel */}
         <HeroCarousel
           banners={INITIAL_BANNERS}
+          whatsappNumber={settings.whatsappNumber}
           onSelectCategory={(cat) => {
             handleSelectCategory(cat);
             scrollToShop();
           }}
-          onOpenChat={() => {
-            setChatInitialQuery('What are the best deals today at YEM MART?');
-            setIsChatOpen(true);
-          }}
         />
+
 
         {/* 3. Shop by Category Grid */}
         <CategoryGrid
@@ -1253,23 +1340,26 @@ export default function App() {
         </section>
       </main>
 
-      {/* Floating Gemini AI Concierge Trigger */}
-      <button
-        onClick={() => {
-          setChatInitialQuery('');
-          setIsChatOpen(true);
-        }}
-        className="fixed bottom-20 sm:bottom-6 right-5 z-40 px-4 py-3 rounded-2xl bg-[#171717] text-white shadow-2xl border border-[#C9A44C]/50 hover:bg-[#C9A44C] hover:text-[#171717] transition-all flex items-center gap-2.5 active:scale-95 group"
-        title="Chat with YEM Concierge (Google Search Grounding enabled)"
+      {/* Floating WhatsApp Quick Support Contact Button */}
+      <a
+        href={formatWhatsAppUrl(
+          settings.whatsappNumber || '917510447887',
+          'Hi YEM MART, I would like assistance with shopping on your store.'
+        )}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-20 sm:bottom-6 right-5 z-40 px-4 py-3 rounded-2xl bg-[#171717] text-white shadow-2xl border border-emerald-500/50 hover:bg-emerald-600 hover:text-white transition-all flex items-center gap-2.5 active:scale-95 group"
+        title="Chat with YEM MART on WhatsApp"
       >
-        <div className="w-6 h-6 rounded-lg bg-[#C9A44C] text-[#171717] flex items-center justify-center font-bold text-xs group-hover:bg-[#171717] group-hover:text-[#C9A44C]">
-          <Sparkles className="w-3.5 h-3.5" />
+        <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-bold text-xs group-hover:bg-white group-hover:text-emerald-700 transition-colors">
+          <MessageCircle className="w-3.5 h-3.5" />
         </div>
         <div className="text-left hidden sm:block">
-          <p className="text-xs font-bold leading-none">YEM Concierge</p>
-          <p className="text-[10px] text-neutral-400 group-hover:text-neutral-800">Malayalam & English</p>
+          <p className="text-xs font-bold leading-none">Chat on WhatsApp</p>
+          <p className="text-[10px] text-neutral-400 group-hover:text-white/80">Kerala Store Support</p>
         </div>
-      </button>
+      </a>
+
 
       {/* Mobile Sticky Bottom Navigation */}
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E7E5E0] px-3 py-2 flex items-center justify-around text-neutral-600">
@@ -1419,9 +1509,59 @@ export default function App() {
           setTrackingInitialPhone(ph);
           setIsMyOrdersOpen(true);
         }}
+        customer={customer}
+        savedAddresses={savedAddresses}
+        onSaveNewAddress={handleSaveAddress}
+        onOpenAuth={() => setIsCustomerAuthModalOpen(true)}
+      />
+
+      {/* Customer Authentication Modal */}
+      <CustomerAuthModal
+        isOpen={isCustomerAuthModalOpen}
+        onClose={() => setIsCustomerAuthModalOpen(false)}
+        onSuccess={(user) => {
+          setCustomer(user);
+          loadCustomerAddresses();
+          showToast(`Welcome back, ${user.fullName || user.email}!`);
+        }}
+      />
+
+      {/* Customer Account Slide-Over Drawer */}
+      <CustomerAccountDrawer
+        isOpen={isCustomerAccountDrawerOpen}
+        onClose={() => setIsCustomerAccountDrawerOpen(false)}
+        customer={customer}
+        addresses={savedAddresses}
+        isLoadingAddresses={isLoadingAddresses}
+        onAddAddress={() => {
+          setEditingAddress(null);
+          setIsAddressFormModalOpen(true);
+        }}
+        onEditAddress={(addr) => {
+          setEditingAddress(addr);
+          setIsAddressFormModalOpen(true);
+        }}
+        onDeleteAddress={handleDeleteAddress}
+        onSetDefaultAddress={handleSetDefaultAddress}
+        onSignOut={handleSignOutCustomer}
+        onOpenOrders={() => setIsMyOrdersOpen(true)}
+        onOpenAuth={() => setIsCustomerAuthModalOpen(true)}
+        whatsappNumber={settings.whatsappNumber}
+      />
+
+      {/* Address Form Modal (Add / Edit) */}
+      <AddressFormModal
+        isOpen={isAddressFormModalOpen}
+        initialAddress={editingAddress}
+        onClose={() => {
+          setIsAddressFormModalOpen(false);
+          setEditingAddress(null);
+        }}
+        onSave={handleSaveAddress}
       />
 
       {/* My Orders & Tracking Modal */}
+
       <MyOrdersModal
         isOpen={isMyOrdersOpen}
         onClose={() => setIsMyOrdersOpen(false)}
