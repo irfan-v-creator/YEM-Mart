@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
-import { X, Mail, Lock, User, Phone, ArrowRight, Loader2, AlertCircle, CheckCircle2, ShieldCheck } from 'lucide-react';
-import { signInCustomer, signUpCustomer, resetCustomerPassword } from '../utils/supabaseClient';
+import React, { useState, useEffect } from 'react';
+import { X, Mail, Lock, User, Phone, ArrowRight, Loader2, AlertCircle, CheckCircle2, ShieldCheck, KeyRound } from 'lucide-react';
+import { signInCustomer, signUpCustomer, resetCustomerPassword, updateCustomerPassword } from '../utils/supabaseClient';
 import { CustomerUser } from '../types';
 
 interface CustomerAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (user: CustomerUser) => void;
-  initialMode?: 'login' | 'register' | 'forgot';
+  initialMode?: 'login' | 'register' | 'forgot' | 'recovery';
 }
 
 export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
@@ -16,7 +16,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   onSuccess,
   initialMode = 'login',
 }) => {
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>(initialMode);
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'recovery'>(initialMode);
   
   // Fields
   const [email, setEmail] = useState('');
@@ -30,6 +30,14 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (initialMode) {
+      setMode(initialMode);
+      setErrorMessage(null);
+      setSuccessMessage(null);
+    }
+  }, [initialMode, isOpen]);
+
   if (!isOpen) return null;
 
   const resetState = () => {
@@ -38,7 +46,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     setIsLoading(false);
   };
 
-  const switchMode = (newMode: 'login' | 'register' | 'forgot') => {
+  const switchMode = (newMode: 'login' | 'register' | 'forgot' | 'recovery') => {
     resetState();
     setMode(newMode);
   };
@@ -50,6 +58,20 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
 
   const validate = (): boolean => {
     setErrorMessage(null);
+
+    // Password recovery mode only requires new password and confirmation
+    if (mode === 'recovery') {
+      if (!password || password.length < 6) {
+        setErrorMessage('New password must be at least 6 characters long.');
+        return false;
+      }
+      if (password !== confirmPassword) {
+        setErrorMessage('Passwords do not match. Please re-enter your password.');
+        return false;
+      }
+      return true;
+    }
+
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email.trim() || !emailRegex.test(email.trim())) {
       setErrorMessage('Please enter a valid email address.');
@@ -139,6 +161,23 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
             'Password reset link has been dispatched to your email. Please follow the instructions to set a new password.'
           );
         }
+      } else if (mode === 'recovery') {
+        const { success, error } = await updateCustomerPassword(password);
+        if (error) {
+          setErrorMessage(error);
+          setIsLoading(false);
+          return;
+        }
+        if (success) {
+          setSuccessMessage(
+            'Your password has been updated successfully! Redirecting you to sign in...'
+          );
+          setPassword('');
+          setConfirmPassword('');
+          setTimeout(() => {
+            switchMode('login');
+          }, 2000);
+        }
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'An unexpected error occurred. Please try again.');
@@ -157,18 +196,20 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
         <div className="px-6 pt-6 pb-4 border-b border-[#E7E5E0] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-amber-50 border border-[#C9A44C]/30 flex items-center justify-center text-[#C9A44C]">
-              <User className="w-4 h-4" />
+              {mode === 'recovery' ? <KeyRound className="w-4 h-4" /> : <User className="w-4 h-4" />}
             </div>
             <div>
               <h2 className="text-base font-extrabold text-[#171717]">
                 {mode === 'login' && 'Sign In to YEM MART'}
                 {mode === 'register' && 'Create Customer Account'}
                 {mode === 'forgot' && 'Reset Your Password'}
+                {mode === 'recovery' && 'Set New Password'}
               </h2>
               <p className="text-xs text-neutral-500">
                 {mode === 'login' && 'Access saved addresses and order tracking'}
                 {mode === 'register' && 'Fast checkout & express delivery across Kerala'}
                 {mode === 'forgot' && 'Enter your registered email address'}
+                {mode === 'recovery' && 'Enter your new secure password below'}
               </p>
             </div>
           </div>
@@ -182,8 +223,8 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Toggle for Login / Register */}
-        {mode !== 'forgot' && (
+        {/* Tab Toggle for Login / Register (Hidden in forgot and recovery mode) */}
+        {mode !== 'forgot' && mode !== 'recovery' && (
           <div className="px-6 pt-4 flex gap-2">
             <button
               type="button"
@@ -265,30 +306,32 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
             </>
           )}
 
-          {/* Email */}
-          <div>
-            <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider mb-1.5">
-              Email Address <span className="text-red-500">*</span>
-            </label>
-            <div className="relative">
-              <Mail className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full pl-10 pr-3.5 py-2.5 bg-[#F7F6F2] rounded-xl border border-[#E7E5E0] text-sm text-[#171717] outline-none focus:border-[#C9A44C] focus:bg-white transition-all"
-              />
+          {/* Email (Hidden in recovery mode because session is already active) */}
+          {mode !== 'recovery' && (
+            <div>
+              <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider mb-1.5">
+                Email Address <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full pl-10 pr-3.5 py-2.5 bg-[#F7F6F2] rounded-xl border border-[#E7E5E0] text-sm text-[#171717] outline-none focus:border-[#C9A44C] focus:bg-white transition-all"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Password (for login and register) */}
+          {/* Password (for login, register, and recovery) */}
           {mode !== 'forgot' && (
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-bold text-neutral-700 uppercase tracking-wider">
-                  Password <span className="text-red-500">*</span>
+                  {mode === 'recovery' ? 'New Password' : 'Password'} <span className="text-red-500">*</span>
                 </label>
                 {mode === 'login' && (
                   <button
@@ -314,11 +357,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
             </div>
           )}
 
-          {/* Confirm Password (register only) */}
-          {mode === 'register' && (
+          {/* Confirm Password (register and recovery) */}
+          {(mode === 'register' || mode === 'recovery') && (
             <div>
               <label className="block text-xs font-bold text-neutral-700 uppercase tracking-wider mb-1.5">
-                Confirm Password <span className="text-red-500">*</span>
+                Confirm {mode === 'recovery' ? 'New Password' : 'Password'} <span className="text-red-500">*</span>
               </label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -351,14 +394,15 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                   {mode === 'login' && 'Sign In'}
                   {mode === 'register' && 'Create Account'}
                   {mode === 'forgot' && 'Send Password Reset Link'}
+                  {mode === 'recovery' && 'Set New Password'}
                 </span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </button>
 
-          {/* Back to sign in link for forgot password */}
-          {mode === 'forgot' && (
+          {/* Back to sign in link for forgot & recovery */}
+          {(mode === 'forgot' || mode === 'recovery') && (
             <div className="text-center pt-2">
               <button
                 type="button"
@@ -380,3 +424,4 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     </div>
   );
 };
+

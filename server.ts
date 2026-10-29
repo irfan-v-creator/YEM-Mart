@@ -1133,7 +1133,11 @@ app.get('/api/customer/addresses', requireCustomerAuth, async (req, res) => {
     const addresses = await store.getCustomerAddresses(userId);
     res.json(addresses);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to fetch saved addresses' });
+    const statusCode = err.statusCode || (err.code === 'TABLE_NOT_FOUND' ? 503 : 500);
+    res.status(statusCode).json({
+      error: err.message || 'Failed to fetch saved addresses',
+      code: err.code || 'ADDRESS_STORAGE_ERROR',
+    });
   }
 });
 
@@ -1180,7 +1184,11 @@ app.post('/api/customer/addresses', requireCustomerAuth, async (req, res) => {
     const saved = await store.saveCustomerAddress(newAddress);
     res.status(201).json(saved);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to save address' });
+    const statusCode = err.statusCode || (err.code === 'TABLE_NOT_FOUND' ? 503 : 500);
+    res.status(statusCode).json({
+      error: err.message || 'Failed to save address',
+      code: err.code || 'ADDRESS_STORAGE_ERROR',
+    });
   }
 });
 
@@ -1228,7 +1236,11 @@ app.put('/api/customer/addresses/:id', requireCustomerAuth, async (req, res) => 
     const saved = await store.saveCustomerAddress(updatedAddress);
     res.json(saved);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to update address' });
+    const statusCode = err.statusCode || (err.code === 'TABLE_NOT_FOUND' ? 503 : 500);
+    res.status(statusCode).json({
+      error: err.message || 'Failed to update address',
+      code: err.code || 'ADDRESS_STORAGE_ERROR',
+    });
   }
 });
 
@@ -1237,9 +1249,16 @@ app.delete('/api/customer/addresses/:id', requireCustomerAuth, async (req, res) 
     const userId = (req as any).customer.id;
     const { id } = req.params;
     const success = await store.deleteCustomerAddress(userId, id);
-    res.json({ success, message: 'Address deleted successfully' });
+    if (!success) {
+      return res.status(404).json({ error: 'Address not found or unauthorized' });
+    }
+    res.json({ success: true, message: 'Address deleted successfully' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to delete address' });
+    const statusCode = err.statusCode || (err.code === 'TABLE_NOT_FOUND' ? 503 : 500);
+    res.status(statusCode).json({
+      error: err.message || 'Failed to delete address',
+      code: err.code || 'ADDRESS_STORAGE_ERROR',
+    });
   }
 });
 
@@ -1253,7 +1272,11 @@ app.put('/api/customer/addresses/:id/default', requireCustomerAuth, async (req, 
     }
     res.json(updated);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Failed to set default address' });
+    const statusCode = err.statusCode || (err.code === 'TABLE_NOT_FOUND' ? 503 : 500);
+    res.status(statusCode).json({
+      error: err.message || 'Failed to set default address',
+      code: err.code || 'ADDRESS_STORAGE_ERROR',
+    });
   }
 });
 

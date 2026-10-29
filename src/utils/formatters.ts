@@ -237,15 +237,33 @@ _Hello YEM MART, I would like to order this item directly. Please verify availab
 }
 
 /**
- * Generates an official WhatsApp URL with 91 country code format: https://wa.me/917510447887
+ * Checks if a WhatsApp number is configured and conforms to valid digits format.
  */
-export function formatWhatsAppUrl(number?: string, text?: string): string {
-  let raw = (number || '917510447887').replace(/[^0-9]/g, '');
+export function isWhatsAppConfigured(number?: string | null): boolean {
+  if (!number || typeof number !== 'string') return false;
+  let raw = number.replace(/[^0-9]/g, '');
   if (raw.startsWith('0')) raw = raw.slice(1);
-  const cleanNumber = raw.length === 10 ? `91${raw}` : (raw || '917510447887');
+  return raw.length === 10 || (raw.length === 12 && raw.startsWith('91'));
+}
+
+/**
+ * Generates an official WhatsApp URL with 91 country code.
+ * Returns empty string if the number is unconfigured or invalid, preventing
+ * redirection to unverified fallback numbers.
+ */
+export function formatWhatsAppUrl(number?: string | null, text?: string): string {
+  if (!number || typeof number !== 'string') return '';
+  let raw = number.replace(/[^0-9]/g, '');
+  if (raw.startsWith('0')) raw = raw.slice(1);
+  if (!raw) return '';
+  const cleanNumber = raw.length === 10 ? `91${raw}` : raw;
+  if (cleanNumber.length !== 12 || !cleanNumber.startsWith('91')) {
+    return '';
+  }
   const query = text ? `?text=${encodeURIComponent(text)}` : '';
   return `https://wa.me/${cleanNumber}${query}`;
 }
+
 
 /**
  * Generates a clean, professional, itemized receipt message for customer support & WhatsApp sharing.

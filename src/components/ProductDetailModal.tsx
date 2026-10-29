@@ -211,18 +211,34 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                 <p className="font-bold text-emerald-950">Have questions about this item?</p>
                 <p className="text-emerald-800 text-[11px]">Chat with our Kerala store support directly on WhatsApp!</p>
               </div>
-              <a
-                href={formatWhatsAppUrl(
-                  whatsappNumber || '917510447887',
+              {(() => {
+                const whatsappUrl = formatWhatsAppUrl(
+                  whatsappNumber,
                   `Hi YEM MART, I have an enquiry about "${product.name}" (SKU: ${currentSku}). Is this available for delivery in Kerala?`
-                )}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shrink-0 flex items-center gap-1.5 shadow-xs"
-              >
-                <MessageCircle className="w-3.5 h-3.5" />
-                <span>Enquire on WhatsApp</span>
-              </a>
+                );
+                if (whatsappUrl) {
+                  return (
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shrink-0 flex items-center gap-1.5 shadow-xs"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>Enquire on WhatsApp</span>
+                    </a>
+                  );
+                }
+                return (
+                  <span
+                    title="WhatsApp support number is not configured"
+                    className="px-3 py-1.5 rounded-lg bg-neutral-200 text-neutral-600 font-semibold text-xs shrink-0 flex items-center gap-1.5 cursor-not-allowed select-none"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 text-neutral-400" />
+                    <span>Support Offline</span>
+                  </span>
+                );
+              })()}
             </div>
           </div>
 

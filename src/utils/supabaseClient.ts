@@ -183,6 +183,58 @@ export async function resetCustomerPassword(email: string): Promise<{ success: b
   return { success: true };
 }
 
+export async function updateCustomerPassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
+  const client = await getClientSupabase();
+  if (!client) {
+    return { success: false, error: 'Authentication service is not available.' };
+  }
+  const { error } = await client.auth.updateUser({ password: newPassword });
+  if (error) {
+    let msg = error.message;
+    if (msg.toLowerCase().includes('session') || msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('invalid')) {
+      msg = 'Your password recovery link is invalid or has expired. Please request a new reset email.';
+    }
+    return { success: false, error: msg };
+  }
+  return { success: true };
+}
+
+export function subscribeToPasswordRecovery(callback: () => void): () => void {
+  let isSubscribed = true;
+  let unsubscribeFn: (() => void) | null = null;
+
+  const setupListener = (client: SupabaseClient) => {
+    if (!isSubscribed) return;
+    const { data: sub } = client.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        callback();
+      }
+    });
+    unsubscribeFn = () => sub.subscription.unsubscribe();
+  };
+
+  const client = getClientSupabaseSync();
+  if (client) {
+    setupListener(client);
+  } else {
+    getClientSupabase().then((c) => {
+      if (c && isSubscribed) setupListener(c);
+    });
+  }
+
+  // Check if initial URL hash contains type=recovery
+  if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
+    setTimeout(() => {
+      if (isSubscribed) callback();
+    }, 200);
+  }
+
+  return () => {
+    isSubscribed = false;
+    if (unsubscribeFn) unsubscribeFn();
+  };
+}
+
 export function subscribeToCustomerAuth(callback: (user: CustomerUser | null) => void): () => void {
   const client = getClientSupabaseSync();
   if (!client) {
@@ -210,3 +262,4 @@ export function subscribeToCustomerAuth(callback: (user: CustomerUser | null) =>
     sub.subscription.unsubscribe();
   };
 }
+

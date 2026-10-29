@@ -36,6 +36,7 @@ interface CustomerAccountDrawerProps {
   onOpenOrders: () => void;
   onOpenAuth: () => void;
   whatsappNumber?: string;
+  addressStorageError?: string | null;
 }
 
 export const CustomerAccountDrawer: React.FC<CustomerAccountDrawerProps> = ({
@@ -51,7 +52,8 @@ export const CustomerAccountDrawer: React.FC<CustomerAccountDrawerProps> = ({
   onSignOut,
   onOpenOrders,
   onOpenAuth,
-  whatsappNumber = '917510447887',
+  whatsappNumber,
+  addressStorageError,
 }) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
@@ -152,17 +154,53 @@ export const CustomerAccountDrawer: React.FC<CustomerAccountDrawerProps> = ({
                   <p className="text-[11px] text-neutral-500">View status & history</p>
                 </button>
 
-                <a
-                  href={formatWhatsAppUrl(whatsappNumber, 'Hi YEM MART, I am logged into my account and would like support with my orders.')}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-3.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/60 border border-emerald-200 text-left transition-all group"
-                >
-                  <MessageCircle className="w-5 h-5 text-emerald-600 mb-1.5 group-hover:scale-105 transition-transform" />
-                  <p className="text-xs font-bold text-emerald-950">WhatsApp Help</p>
-                  <p className="text-[11px] text-emerald-800">Direct store chat</p>
-                </a>
+                {(() => {
+                  const whatsappUrl = formatWhatsAppUrl(
+                    whatsappNumber,
+                    'Hi YEM MART, I am logged into my account and would like support with my orders.'
+                  );
+                  if (whatsappUrl) {
+                    return (
+                      <a
+                        href={whatsappUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-3.5 rounded-xl bg-emerald-50 hover:bg-emerald-100/60 border border-emerald-200 text-left transition-all group"
+                      >
+                        <MessageCircle className="w-5 h-5 text-emerald-600 mb-1.5 group-hover:scale-105 transition-transform" />
+                        <p className="text-xs font-bold text-emerald-950">WhatsApp Help</p>
+                        <p className="text-[11px] text-emerald-800">Direct store chat</p>
+                      </a>
+                    );
+                  }
+                  return (
+                    <div
+                      title="WhatsApp store support number is currently not configured"
+                      className="p-3.5 rounded-xl bg-neutral-100 border border-neutral-200 text-left opacity-75 cursor-not-allowed select-none"
+                    >
+                      <MessageCircle className="w-5 h-5 text-neutral-400 mb-1.5" />
+                      <p className="text-xs font-bold text-neutral-600">WhatsApp Help</p>
+                      <p className="text-[11px] text-neutral-400">Support Offline</p>
+                    </div>
+                  );
+                })()}
               </div>
+
+              {/* Address Storage Warning / Missing Table Banner */}
+              {addressStorageError && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                  <div>
+                    <p className="font-bold">Address Persistence Notice</p>
+                    <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                      {addressStorageError}
+                    </p>
+                    <p className="text-[10px] text-amber-700/80 mt-1">
+                      Guest and direct delivery checkout remain fully functional.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Saved Addresses Section */}
               <div>

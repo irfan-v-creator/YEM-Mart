@@ -73,7 +73,7 @@ import {
   CustomerUser,
   SavedAddress
 } from './types';
-import { subscribeToCustomerAuth, signOutCustomer } from './utils/supabaseClient';
+import { subscribeToCustomerAuth, signOutCustomer, subscribeToPasswordRecovery } from './utils/supabaseClient';
 import { formatWhatsAppUrl } from './utils/formatters';
 
 import { 
@@ -435,7 +435,9 @@ export default function App() {
   const [customer, setCustomer] = useState<CustomerUser | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
+  const [addressStorageError, setAddressStorageError] = useState<string | null>(null);
   const [isCustomerAuthModalOpen, setIsCustomerAuthModalOpen] = useState(false);
+  const [customerAuthModalMode, setCustomerAuthModalMode] = useState<'login' | 'register' | 'forgot' | 'recovery'>('login');
   const [isCustomerAccountDrawerOpen, setIsCustomerAccountDrawerOpen] = useState(false);
   const [isAddressFormModalOpen, setIsAddressFormModalOpen] = useState(false);
   const [editingAddress, setEditingAddress] = useState<SavedAddress | null>(null);
@@ -443,17 +445,20 @@ export default function App() {
   const loadCustomerAddresses = useCallback(async () => {
     try {
       setIsLoadingAddresses(true);
+      setAddressStorageError(null);
       const list = await api.getCustomerAddresses();
       setSavedAddresses(list);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Could not load saved addresses:', err);
+      setAddressStorageError(err.message || 'Saved address storage is currently unavailable.');
+      setSavedAddresses([]);
     } finally {
       setIsLoadingAddresses(false);
     }
   }, []);
 
   useEffect(() => {
-    const unsubscribe = subscribeToCustomerAuth((user) => {
+    const unsubscribeAuth = subscribeToCustomerAuth((user) => {
       setCustomer(user);
       if (user) {
         loadCustomerAddresses();
@@ -461,20 +466,37 @@ export default function App() {
         setSavedAddresses([]);
       }
     });
-    return () => unsubscribe();
+
+    const unsubscribeRecovery = subscribeToPasswordRecovery(() => {
+      setCustomerAuthModalMode('recovery');
+      setIsCustomerAuthModalOpen(true);
+      if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeRecovery();
+    };
   }, [loadCustomerAddresses]);
 
   const handleSaveAddress = async (addrData: Partial<SavedAddress>) => {
-    if (editingAddress) {
-      const updated = await api.updateCustomerAddress(editingAddress.id, addrData);
-      setSavedAddresses((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-      showToast('Address updated successfully');
-    } else {
-      const created = await api.createCustomerAddress(addrData);
-      setSavedAddresses((prev) => [created, ...prev]);
-      showToast('Address saved to your account');
+    try {
+      if (editingAddress) {
+        const updated = await api.updateCustomerAddress(editingAddress.id, addrData);
+        setSavedAddresses((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+        showToast('Address updated successfully');
+      } else {
+        const created = await api.createCustomerAddress(addrData);
+        setSavedAddresses((prev) => [created, ...prev]);
+        showToast('Address saved to your account');
+      }
+      await loadCustomerAddresses();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save address');
+      throw err;
     }
-    await loadCustomerAddresses();
   };
 
   const handleDeleteAddress = async (id: string) => {
@@ -1341,24 +1363,45 @@ export default function App() {
       </main>
 
       {/* Floating WhatsApp Quick Support Contact Button */}
-      <a
-        href={formatWhatsAppUrl(
-          settings.whatsappNumber || '917510447887',
+      {(() => {
+        const whatsappUrl = formatWhatsAppUrl(
+          settings.whatsappNumber,
           'Hi YEM MART, I would like assistance with shopping on your store.'
-        )}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="fixed bottom-20 sm:bottom-6 right-5 z-40 px-4 py-3 rounded-2xl bg-[#171717] text-white shadow-2xl border border-emerald-500/50 hover:bg-emerald-600 hover:text-white transition-all flex items-center gap-2.5 active:scale-95 group"
-        title="Chat with YEM MART on WhatsApp"
-      >
-        <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-bold text-xs group-hover:bg-white group-hover:text-emerald-700 transition-colors">
-          <MessageCircle className="w-3.5 h-3.5" />
-        </div>
-        <div className="text-left hidden sm:block">
-          <p className="text-xs font-bold leading-none">Chat on WhatsApp</p>
-          <p className="text-[10px] text-neutral-400 group-hover:text-white/80">Kerala Store Support</p>
-        </div>
-      </a>
+        );
+        if (whatsappUrl) {
+          return (
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="fixed bottom-20 sm:bottom-6 right-5 z-40 px-4 py-3 rounded-2xl bg-[#171717] text-white shadow-2xl border border-emerald-500/50 hover:bg-emerald-600 hover:text-white transition-all flex items-center gap-2.5 active:scale-95 group"
+              title="Chat with YEM MART on WhatsApp"
+            >
+              <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-bold text-xs group-hover:bg-white group-hover:text-emerald-700 transition-colors">
+                <MessageCircle className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-left hidden sm:block">
+                <p className="text-xs font-bold leading-none">Chat on WhatsApp</p>
+                <p className="text-[10px] text-neutral-400 group-hover:text-white/80">Kerala Store Support</p>
+              </div>
+            </a>
+          );
+        }
+        return (
+          <div
+            className="fixed bottom-20 sm:bottom-6 right-5 z-40 px-4 py-3 rounded-2xl bg-[#171717]/80 text-neutral-400 shadow-xl border border-neutral-700 flex items-center gap-2.5 cursor-not-allowed select-none opacity-80"
+            title="WhatsApp store support number is currently not configured or offline"
+          >
+            <div className="w-6 h-6 rounded-lg bg-neutral-700 text-neutral-400 flex items-center justify-center font-bold text-xs">
+              <MessageCircle className="w-3.5 h-3.5" />
+            </div>
+            <div className="text-left hidden sm:block">
+              <p className="text-xs font-bold leading-none text-neutral-300">WhatsApp Support</p>
+              <p className="text-[10px] text-neutral-500">Currently Offline</p>
+            </div>
+          </div>
+        );
+      })()}
 
 
       {/* Mobile Sticky Bottom Navigation */}
@@ -1518,7 +1561,11 @@ export default function App() {
       {/* Customer Authentication Modal */}
       <CustomerAuthModal
         isOpen={isCustomerAuthModalOpen}
-        onClose={() => setIsCustomerAuthModalOpen(false)}
+        initialMode={customerAuthModalMode}
+        onClose={() => {
+          setIsCustomerAuthModalOpen(false);
+          setCustomerAuthModalMode('login');
+        }}
         onSuccess={(user) => {
           setCustomer(user);
           loadCustomerAddresses();
@@ -1533,6 +1580,7 @@ export default function App() {
         customer={customer}
         addresses={savedAddresses}
         isLoadingAddresses={isLoadingAddresses}
+        addressStorageError={addressStorageError}
         onAddAddress={() => {
           setEditingAddress(null);
           setIsAddressFormModalOpen(true);
@@ -1545,7 +1593,10 @@ export default function App() {
         onSetDefaultAddress={handleSetDefaultAddress}
         onSignOut={handleSignOutCustomer}
         onOpenOrders={() => setIsMyOrdersOpen(true)}
-        onOpenAuth={() => setIsCustomerAuthModalOpen(true)}
+        onOpenAuth={() => {
+          setCustomerAuthModalMode('login');
+          setIsCustomerAuthModalOpen(true);
+        }}
         whatsappNumber={settings.whatsappNumber}
       />
 

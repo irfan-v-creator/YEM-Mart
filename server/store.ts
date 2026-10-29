@@ -1415,54 +1415,143 @@ class Store {
 
   // --- CUSTOMER ADDRESSES ---
   public async getCustomerAddresses(userId: string): Promise<SavedAddress[]> {
-    if (!this.data.customerAddresses) this.data.customerAddresses = [];
-
     if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabaseClient();
-        if (supabase) {
-          const { data, error } = await supabase
-            .from('customer_addresses')
-            .select('*')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false });
-
-          if (!error && Array.isArray(data)) {
-            const list: SavedAddress[] = data.map((row: any) => ({
-              id: row.id,
-              userId: row.user_id,
-              fullName: row.name || row.full_name || '',
-              phone: row.phone || '',
-              address: row.address || '',
-              landmark: row.landmark || undefined,
-              district: row.district || '',
-              pincode: row.pincode || '',
-              label: (row.label as any) || 'Home',
-              isDefault: Boolean(row.is_default),
-              createdAt: row.created_at,
-              updatedAt: row.updated_at,
-            }));
-            this.data.customerAddresses = [
-              ...this.data.customerAddresses.filter((a) => a.userId !== userId),
-              ...list,
-            ];
-            return list;
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase getCustomerAddresses error:', err);
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        const err: any = new Error('Database client is not available.');
+        err.statusCode = 503;
+        throw err;
       }
+
+      const { data, error } = await supabase
+        .from('customer_addresses')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        if (error.code === 'PGRST205' || error.message?.includes('does not exist') || error.message?.includes('schema cache')) {
+          const tableErr: any = new Error('Customer address storage is not yet initialized in the database. Please contact store administrator to apply the migration.');
+          tableErr.code = 'TABLE_NOT_FOUND';
+          tableErr.statusCode = 503;
+          throw tableErr;
+        }
+        const dbErr: any = new Error(`Database error fetching addresses: ${error.message}`);
+        dbErr.code = error.code;
+        dbErr.statusCode = 500;
+        throw dbErr;
+      }
+
+      if (Array.isArray(data)) {
+        return data.map((row: any) => ({
+          id: row.id,
+          userId: row.user_id,
+          fullName: row.name || row.full_name || '',
+          phone: row.phone || '',
+          address: row.address || '',
+          landmark: row.landmark || undefined,
+          district: row.district || '',
+          pincode: row.pincode || '',
+          label: (row.label as any) || 'Home',
+          isDefault: Boolean(row.is_default),
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
+      }
+      return [];
     }
 
+    // Offline / local mock fallback ONLY when Supabase credentials are not configured
+    if (!this.data.customerAddresses) this.data.customerAddresses = [];
     return this.data.customerAddresses
       .filter((a) => a.userId === userId)
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 
   public async saveCustomerAddress(address: SavedAddress): Promise<SavedAddress> {
-    if (!this.data.customerAddresses) this.data.customerAddresses = [];
+    if (isSupabaseConfigured()) {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        const err: any = new Error('Database client is not available.');
+        err.statusCode = 503;
+        throw err;
+      }
 
-    // If this address is set as default, unset existing default addresses for this user
+      // If address is marked as default, atomically reset existing defaults for this customer first
+      if (address.isDefault) {
+        const { error: resetErr } = await supabase
+          .from('customer_addresses')
+          .update({ is_default: false, updated_at: new Date().toISOString() })
+          .eq('user_id', address.userId)
+          .eq('is_default', true);
+
+        if (resetErr) {
+          if (resetErr.code === 'PGRST205' || resetErr.message?.includes('does not exist') || resetErr.message?.includes('schema cache')) {
+            const tableErr: any = new Error('Customer address storage is not yet initialized in the database. Please contact store administrator to apply the migration.');
+            tableErr.code = 'TABLE_NOT_FOUND';
+            tableErr.statusCode = 503;
+            throw tableErr;
+          }
+          const dbErr: any = new Error(`Failed to reset existing default address: ${resetErr.message}`);
+          dbErr.statusCode = 500;
+          throw dbErr;
+        }
+      }
+
+      const { data, error: upsertErr } = await supabase
+        .from('customer_addresses')
+        .upsert({
+          id: address.id,
+          user_id: address.userId,
+          name: address.fullName,
+          phone: address.phone,
+          address: address.address,
+          landmark: address.landmark || null,
+          district: address.district,
+          pincode: address.pincode,
+          label: address.label,
+          is_default: Boolean(address.isDefault),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (upsertErr) {
+        if (upsertErr.code === 'PGRST205' || upsertErr.message?.includes('does not exist') || upsertErr.message?.includes('schema cache')) {
+          const tableErr: any = new Error('Customer address storage is not yet initialized in the database. Please contact store administrator to apply the migration.');
+          tableErr.code = 'TABLE_NOT_FOUND';
+          tableErr.statusCode = 503;
+          throw tableErr;
+        }
+        if (upsertErr.code === '23505') {
+          const conflictErr: any = new Error('Another address was concurrently marked as default. Please refresh and retry.');
+          conflictErr.code = 'CONCURRENCY_CONFLICT';
+          conflictErr.statusCode = 409;
+          throw conflictErr;
+        }
+        const dbErr: any = new Error(`Failed to persist address to database: ${upsertErr.message}`);
+        dbErr.statusCode = 500;
+        throw dbErr;
+      }
+
+      return {
+        id: data.id,
+        userId: data.user_id,
+        fullName: data.name || data.full_name || '',
+        phone: data.phone || '',
+        address: data.address || '',
+        landmark: data.landmark || undefined,
+        district: data.district || '',
+        pincode: data.pincode || '',
+        label: (data.label as any) || 'Home',
+        isDefault: Boolean(data.is_default),
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      };
+    }
+
+    // Offline / test fallback ONLY when Supabase credentials are not configured
+    if (!this.data.customerAddresses) this.data.customerAddresses = [];
     if (address.isDefault) {
       this.data.customerAddresses.forEach((a) => {
         if (a.userId === address.userId) a.isDefault = false;
@@ -1475,95 +1564,157 @@ class Store {
     if (existingIdx >= 0) {
       this.data.customerAddresses[existingIdx] = { ...address, updatedAt: new Date().toISOString() };
     } else {
-      const userAddresses = this.data.customerAddresses.filter((a) => a.userId === address.userId);
-      if (userAddresses.length === 0) {
-        address.isDefault = true;
-      }
       this.data.customerAddresses.unshift(address);
     }
 
     this.saveDatabaseSync();
-
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabaseClient();
-        if (supabase) {
-          if (address.isDefault) {
-            await supabase
-              .from('customer_addresses')
-              .update({ is_default: false })
-              .eq('user_id', address.userId);
-          }
-          await supabase
-            .from('customer_addresses')
-            .upsert({
-              id: address.id,
-              user_id: address.userId,
-              name: address.fullName,
-              phone: address.phone,
-              address: address.address,
-              landmark: address.landmark || null,
-              district: address.district,
-              pincode: address.pincode,
-              label: address.label,
-              is_default: address.isDefault,
-              updated_at: new Date().toISOString(),
-            });
-        }
-      } catch (err) {
-        console.warn('Supabase saveCustomerAddress error:', err);
-      }
-    }
-
     return address;
   }
 
   public async deleteCustomerAddress(userId: string, addressId: string): Promise<boolean> {
-    if (!this.data.customerAddresses) this.data.customerAddresses = [];
-    const target = this.data.customerAddresses.find((a) => a.id === addressId && a.userId === userId);
-    const wasDefault = target?.isDefault;
+    if (isSupabaseConfigured()) {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        const err: any = new Error('Database client is not available.');
+        err.statusCode = 503;
+        throw err;
+      }
 
+      const { data: target, error: findErr } = await supabase
+        .from('customer_addresses')
+        .select('id, is_default')
+        .match({ id: addressId, user_id: userId })
+        .maybeSingle();
+
+      if (findErr) {
+        if (findErr.code === 'PGRST205' || findErr.message?.includes('does not exist') || findErr.message?.includes('schema cache')) {
+          const tableErr: any = new Error('Customer address storage is not yet initialized in the database. Please contact store administrator to apply the migration.');
+          tableErr.code = 'TABLE_NOT_FOUND';
+          tableErr.statusCode = 503;
+          throw tableErr;
+        }
+        throw new Error(`Failed to query address before deletion: ${findErr.message}`);
+      }
+
+      if (!target) return false;
+
+      const { error: delErr } = await supabase
+        .from('customer_addresses')
+        .delete()
+        .match({ id: addressId, user_id: userId });
+
+      if (delErr) {
+        throw new Error(`Failed to delete address: ${delErr.message}`);
+      }
+
+      return true;
+    }
+
+    // Offline / test fallback
+    if (!this.data.customerAddresses) this.data.customerAddresses = [];
+    const beforeCount = this.data.customerAddresses.length;
     this.data.customerAddresses = this.data.customerAddresses.filter(
       (a) => !(a.id === addressId && a.userId === userId)
     );
-
-    if (wasDefault) {
-      const remaining = this.data.customerAddresses.filter((a) => a.userId === userId);
-      if (remaining.length > 0) {
-        remaining[0].isDefault = true;
-      }
-    }
-
     this.saveDatabaseSync();
-
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabaseClient();
-        if (supabase) {
-          await supabase
-            .from('customer_addresses')
-            .delete()
-            .match({ id: addressId, user_id: userId });
-
-          if (wasDefault) {
-            const remaining = this.data.customerAddresses.filter((a) => a.userId === userId);
-            if (remaining.length > 0) {
-              await supabase
-                .from('customer_addresses')
-                .update({ is_default: true })
-                .match({ id: remaining[0].id, user_id: userId });
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase deleteCustomerAddress error:', err);
-      }
-    }
-
-    return true;
+    return this.data.customerAddresses.length < beforeCount;
   }
 
   public async setDefaultCustomerAddress(userId: string, addressId: string): Promise<SavedAddress | null> {
+    if (isSupabaseConfigured()) {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        const err: any = new Error('Database client is not available.');
+        err.statusCode = 503;
+        throw err;
+      }
+
+      // Try atomic RPC function first
+      let updatedRow: any = null;
+      let rpcAttempted = false;
+
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('set_customer_default_address', {
+          p_user_id: userId,
+          p_address_id: addressId,
+        });
+
+        if (!rpcErr && rpcData) {
+          updatedRow = rpcData;
+          rpcAttempted = true;
+        } else if (rpcErr && (rpcErr.code === 'PGRST205' || rpcErr.message?.includes('does not exist') || rpcErr.message?.includes('schema cache'))) {
+          const tableErr: any = new Error('Customer address storage is not yet initialized in the database. Please contact store administrator to apply the migration.');
+          tableErr.code = 'TABLE_NOT_FOUND';
+          tableErr.statusCode = 503;
+          throw tableErr;
+        }
+      } catch (err: any) {
+        if (err.code === 'TABLE_NOT_FOUND') throw err;
+      }
+
+      // If RPC not available (function not yet migrated), fall back to safe sequential statements
+      if (!rpcAttempted || !updatedRow) {
+        const { data: target, error: targetErr } = await supabase
+          .from('customer_addresses')
+          .select('*')
+          .match({ id: addressId, user_id: userId })
+          .maybeSingle();
+
+        if (targetErr) {
+          if (targetErr.code === 'PGRST205' || targetErr.message?.includes('does not exist') || targetErr.message?.includes('schema cache')) {
+            const tableErr: any = new Error('Customer address storage is not yet initialized in the database. Please contact store administrator to apply the migration.');
+            tableErr.code = 'TABLE_NOT_FOUND';
+            tableErr.statusCode = 503;
+            throw tableErr;
+          }
+          throw new Error(`Database error: ${targetErr.message}`);
+        }
+
+        if (!target) return null;
+
+        // Reset existing default
+        const { error: resetErr } = await supabase
+          .from('customer_addresses')
+          .update({ is_default: false, updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('is_default', true);
+
+        if (resetErr) {
+          throw new Error(`Failed to reset previous default address: ${resetErr.message}`);
+        }
+
+        // Set target default
+        const { data: updated, error: setErr } = await supabase
+          .from('customer_addresses')
+          .update({ is_default: true, updated_at: new Date().toISOString() })
+          .match({ id: addressId, user_id: userId })
+          .select()
+          .single();
+
+        if (setErr) {
+          throw new Error(`Failed to set address as default: ${setErr.message}`);
+        }
+
+        updatedRow = updated;
+      }
+
+      return {
+        id: updatedRow.id,
+        userId: updatedRow.user_id,
+        fullName: updatedRow.name || updatedRow.full_name || '',
+        phone: updatedRow.phone || '',
+        address: updatedRow.address || '',
+        landmark: updatedRow.landmark || undefined,
+        district: updatedRow.district || '',
+        pincode: updatedRow.pincode || '',
+        label: (updatedRow.label as any) || 'Home',
+        isDefault: Boolean(updatedRow.is_default),
+        createdAt: updatedRow.created_at,
+        updatedAt: updatedRow.updated_at,
+      };
+    }
+
+    // Offline / test fallback
     if (!this.data.customerAddresses) this.data.customerAddresses = [];
     let found: SavedAddress | null = null;
 
@@ -1579,26 +1730,6 @@ class Store {
     });
 
     this.saveDatabaseSync();
-
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabaseClient();
-        if (supabase) {
-          await supabase
-            .from('customer_addresses')
-            .update({ is_default: false })
-            .eq('user_id', userId);
-
-          await supabase
-            .from('customer_addresses')
-            .update({ is_default: true })
-            .match({ id: addressId, user_id: userId });
-        }
-      } catch (err) {
-        console.warn('Supabase setDefaultCustomerAddress error:', err);
-      }
-    }
-
     return found;
   }
 }

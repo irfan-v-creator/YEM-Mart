@@ -14,7 +14,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
   banners,
   onSelectCategory,
   onOpenChat,
-  whatsappNumber = '917510447887',
+  whatsappNumber,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -30,6 +30,11 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
   const handleNext = () => {
     setCurrentIndex((prev) => (prev === banners.length - 1 ? 0 : prev + 1));
   };
+
+  const whatsappUrl = formatWhatsAppUrl(
+    whatsappNumber,
+    `Hi YEM MART, I am browsing "${currentBanner.title}" and would like assistance!`
+  );
 
   return (
     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
@@ -74,15 +79,25 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({
               <span>{currentBanner.ctaText}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-            <a
-              href={formatWhatsAppUrl(whatsappNumber, `Hi YEM MART, I am browsing "${currentBanner.title}" and would like assistance!`)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-emerald-600/30 text-white font-medium text-sm backdrop-blur-sm border border-white/20 hover:border-emerald-500/40 transition-all flex items-center gap-2"
-            >
-              <MessageCircle className="w-4 h-4 text-emerald-400" />
-              <span>Chat on WhatsApp</span>
-            </a>
+            {whatsappUrl ? (
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-emerald-600/30 text-white font-medium text-sm backdrop-blur-sm border border-white/20 hover:border-emerald-500/40 transition-all flex items-center gap-2"
+              >
+                <MessageCircle className="w-4 h-4 text-emerald-400" />
+                <span>Chat on WhatsApp</span>
+              </a>
+            ) : (
+              <span
+                title="WhatsApp support number is not configured"
+                className="px-4 py-2.5 rounded-xl bg-white/5 text-neutral-400 font-medium text-sm border border-white/10 flex items-center gap-2 cursor-not-allowed select-none"
+              >
+                <MessageCircle className="w-4 h-4 text-neutral-500" />
+                <span>WhatsApp Offline</span>
+              </span>
+            )}
           </div>
 
         </div>

@@ -257,7 +257,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, an
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- ----------------------------------------------------------------------------
 -- 10. CUSTOMER ADDRESSES TABLE (AUTHENTICATED CUSTOMER SAVED ADDRESSES)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS customer_addresses (
@@ -276,19 +275,96 @@ CREATE TABLE IF NOT EXISTS customer_addresses (
 );
 
 CREATE INDEX IF NOT EXISTS idx_customer_addresses_user_id ON customer_addresses(user_id);
-CREATE INDEX IF NOT EXISTS idx_customer_addresses_user_default ON customer_addresses(user_id, is_default);
+
+-- Deterministic Pre-Index Deduplication: ensure at most 1 default address per customer
+WITH ranked_defaults AS (
+  SELECT id,
+         ROW_NUMBER() OVER (
+           PARTITION BY user_id 
+           ORDER BY updated_at DESC, created_at DESC, id DESC
+         ) AS rn
+  FROM customer_addresses
+  WHERE is_default = true
+)
+UPDATE customer_addresses
+SET is_default = false
+WHERE id IN (
+  SELECT id FROM ranked_defaults WHERE rn > 1
+);
+
+-- Strict Concurrency Guard: Enforce at most one default address per customer
+CREATE UNIQUE INDEX IF NOT EXISTS idx_single_default_address_per_user
+ON customer_addresses (user_id)
+WHERE is_default = true;
+
+-- Hardened Atomic RPC function for default address switching
+CREATE OR REPLACE FUNCTION set_customer_default_address(p_user_id UUID, p_address_id VARCHAR)
+RETURNS customer_addresses
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_address customer_addresses;
+BEGIN
+  -- Strict caller validation: enforce trusted caller model
+  IF auth.role() = 'service_role' THEN
+    -- Trusted server-side call via backend SUPABASE_SERVICE_ROLE_KEY
+    NULL;
+  ELSIF auth.role() = 'authenticated' THEN
+    -- Direct authenticated call: auth.uid() must be non-null and match p_user_id exactly
+    IF auth.uid() IS NULL OR auth.uid() != p_user_id THEN
+      RAISE EXCEPTION 'Unauthorized: Caller identity does not match customer ID' USING ERRCODE = '42501';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'Unauthorized: Caller role not permitted' USING ERRCODE = '42501';
+  END IF;
+
+  -- Verify target address exists and strictly belongs to the customer
+  SELECT * INTO v_address FROM customer_addresses 
+  WHERE id = p_address_id AND user_id = p_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Address not found or unauthorized' USING ERRCODE = 'P0002';
+  END IF;
+
+  -- Atomically reset existing defaults for this customer only
+  UPDATE customer_addresses
+  SET is_default = false, updated_at = NOW()
+  WHERE user_id = p_user_id AND is_default = true AND id != p_address_id;
+
+  -- Mark target address as default
+  UPDATE customer_addresses
+  SET is_default = true, updated_at = NOW()
+  WHERE id = p_address_id AND user_id = p_user_id
+  RETURNING * INTO v_address;
+
+  RETURN v_address;
+END;
+$$;
 
 -- ----------------------------------------------------------------------------
--- 11. ROLE PERMISSIONS & GRANTS (CRITICAL FOR SUPABASE SERVICE_ROLE & ANON)
+-- 11. ROLE PERMISSIONS & LEAST-PRIVILEGE GRANTS
 -- ----------------------------------------------------------------------------
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
-GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
+-- Revoke all table-level access from PUBLIC and anon for sensitive customer data
+REVOKE ALL ON TABLE customer_addresses FROM PUBLIC;
+REVOKE ALL ON TABLE customer_addresses FROM anon;
+
+-- Grant least-privilege DML to authenticated users (governed by RLS)
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE customer_addresses TO authenticated;
+
+-- Service role and postgres maintain administrative access
+GRANT ALL PRIVILEGES ON TABLE customer_addresses TO postgres, service_role;
+
+-- Revoke RPC execution privileges from untrusted caller roles
+REVOKE ALL ON FUNCTION set_customer_default_address(UUID, VARCHAR) FROM PUBLIC;
+REVOKE ALL ON FUNCTION set_customer_default_address(UUID, VARCHAR) FROM anon;
+REVOKE ALL ON FUNCTION set_customer_default_address(UUID, VARCHAR) FROM authenticated;
+
+-- Grant RPC execution strictly to postgres and service_role
+GRANT EXECUTE ON FUNCTION set_customer_default_address(UUID, VARCHAR) TO postgres, service_role;
 
 -- ----------------------------------------------------------------------------
 -- 12. ROW LEVEL SECURITY (RLS) POLICIES
@@ -334,9 +410,7 @@ DROP POLICY IF EXISTS "Customers can delete own addresses" ON customer_addresses
 CREATE POLICY "Customers can delete own addresses" ON customer_addresses 
   FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
--- Service Role Key (Backend Server) has full bypass privileges natively,
--- and the above GRANT statements ensure complete access across all tables.
-
 -- Reload PostgREST schema cache to ensure new columns and grants take effect immediately
 NOTIFY pgrst, 'reload schema';
+
 
