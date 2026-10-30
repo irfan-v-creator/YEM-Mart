@@ -13,7 +13,8 @@ import type {
   CustomerDetails,
   OrderStatus,
   PaymentStatus,
-  SavedAddress
+  SavedAddress,
+  OrderWhatsAppMessage
 } from '../src/types/index.js';
 import { 
   INITIAL_PRODUCTS, 
@@ -191,6 +192,9 @@ class Store {
       cancelledAt: o.cancelled_at || undefined,
       isRestockedOnCancellation: Boolean(o.is_restocked_on_cancellation),
       statusTimeline: Array.isArray(o.status_timeline) ? o.status_timeline : [],
+      whatsAppMessages: Array.isArray(o.whatsapp_messages) 
+        ? o.whatsapp_messages 
+        : (Array.isArray(o.whatsAppMessages) ? o.whatsAppMessages : []),
     };
   }
 
@@ -424,7 +428,7 @@ class Store {
     const supabase = getSupabaseClient();
     if (!supabase) return { success: false, error: 'Database client unavailable' };
     try {
-      const { error } = await supabase.from('orders').upsert({
+      const basePayload: Record<string, any> = {
         id: o.id,
         created_at: o.createdAt || new Date().toISOString(),
         customer: o.customer,
@@ -443,7 +447,20 @@ class Store {
         is_restocked_on_cancellation: Boolean(o.isRestockedOnCancellation),
         status_timeline: o.statusTimeline || [],
         updated_at: new Date().toISOString(),
+      };
+
+      // Attempt upsert including whatsapp_messages for forward compatibility with migrated database
+      let { error } = await supabase.from('orders').upsert({
+        ...basePayload,
+        whatsapp_messages: o.whatsAppMessages || [],
       });
+
+      // If remote Supabase database has not yet applied the 20261030 migration, fallback safely to base order payload
+      if (error && (error.code === 'PGRST204' || error.message?.includes('whatsapp_messages'))) {
+        const retryResult = await supabase.from('orders').upsert(basePayload);
+        error = retryResult.error;
+      }
+
       if (error) {
         console.error(`Failed to sync order ${o.id} to Supabase:`, error);
         return { success: false, error: error.message };
@@ -985,6 +1002,21 @@ class Store {
       return { success: false, error: 'Delivery district is required.' };
     }
 
+    // Optional WhatsApp Number Validation
+    let sanitizedWhatsAppNumber: string | undefined = undefined;
+    const isWhatsAppSame = Boolean(customer.isWhatsAppSameAsPhone);
+    if (isWhatsAppSame) {
+      sanitizedWhatsAppNumber = phone;
+    } else if (customer.whatsappNumber && typeof customer.whatsappNumber === 'string') {
+      const cleanWa = customer.whatsappNumber.replace(/[^0-9]/g, '');
+      if (cleanWa) {
+        if (!/^[6-9]\d{9}$/.test(cleanWa)) {
+          return { success: false, error: 'Please provide a valid 10-digit WhatsApp number starting with 6-9.' };
+        }
+        sanitizedWhatsAppNumber = cleanWa;
+      }
+    }
+
     // 2. Server-side cart validation
     const validation = this.validateCart(items, couponCode);
     if (!validation.isValid) {
@@ -1051,6 +1083,8 @@ class Store {
     const sanitizedCustomer: CustomerDetails = {
       fullName,
       phone,
+      whatsappNumber: sanitizedWhatsAppNumber,
+      isWhatsAppSameAsPhone: isWhatsAppSame,
       address,
       pincode,
       district,
@@ -1087,6 +1121,7 @@ class Store {
           note: 'Order ID generated on website. Awaiting manual WhatsApp dispatch by customer.',
         },
       ],
+      whatsAppMessages: [],
     };
 
     // 7. Await persistent save to Supabase before reporting success
@@ -1310,9 +1345,119 @@ class Store {
       ...found,
       customer: maskedCustomer,
       utrNumber: found.utrNumber ? found.utrNumber.slice(0, 4) + '******' : undefined,
+      whatsAppMessages: undefined, // Never expose admin message logs in public tracking
     };
 
     return { success: true, order: sanitizedOrder };
+  }
+
+  // --- ORDER WHATSAPP MESSAGE HISTORY (Admin-only) ---
+  public async recordOrderWhatsAppMessage(params: {
+    orderId: string;
+    messageType: any;
+    recipientNumber: string;
+    messageContent: string;
+    adminId: string;
+    adminName: string;
+    status: any;
+  }): Promise<{ success: boolean; message?: OrderWhatsAppMessage; error?: string }> {
+    const order = this.data.orders.find(o => o.id === params.orderId);
+    if (!order) {
+      return { success: false, error: 'Order not found' };
+    }
+
+    if (!order.whatsAppMessages) {
+      order.whatsAppMessages = [];
+    }
+
+    const cleanRecipient = params.recipientNumber.replace(/[^0-9]/g, '');
+    const validStatuses = ['Draft Prepared', 'WhatsApp Opened', 'Marked as Sent', 'Not Sent'];
+    const status = validStatuses.includes(params.status) ? params.status : 'WhatsApp Opened';
+
+    const newMessage: OrderWhatsAppMessage = {
+      id: `wam-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      orderId: params.orderId,
+      messageType: params.messageType,
+      recipientNumber: cleanRecipient,
+      messageContent: params.messageContent,
+      adminId: params.adminId || 'admin',
+      adminName: params.adminName || 'Admin',
+      status: status as any,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sentAt: status === 'Marked as Sent' ? new Date().toISOString() : undefined,
+    };
+
+    order.whatsAppMessages.unshift(newMessage);
+    this.saveDatabaseSync();
+
+    this.logAudit(
+      'WHATSAPP_MESSAGE_RECORDED',
+      params.adminName || 'Admin',
+      `Recorded WhatsApp communication (${params.messageType}: ${status}) for order ${params.orderId}`,
+      params.orderId
+    );
+
+    // Sync with Supabase orders table
+    if (isSupabaseConfigured()) {
+      this.syncOrderToSupabase(order).catch(err => {
+        console.error(`Failed to sync WhatsApp message log for order ${params.orderId}:`, err);
+      });
+    }
+
+    return { success: true, message: newMessage };
+  }
+
+  public async updateOrderWhatsAppMessageStatus(
+    orderId: string,
+    messageId: string,
+    status: 'Draft Prepared' | 'WhatsApp Opened' | 'Marked as Sent' | 'Not Sent',
+    adminName = 'Admin'
+  ): Promise<{ success: boolean; message?: OrderWhatsAppMessage; error?: string }> {
+    const order = this.data.orders.find(o => o.id === orderId);
+    if (!order) {
+      return { success: false, error: 'Order not found' };
+    }
+
+    if (!order.whatsAppMessages) {
+      return { success: false, error: 'Message not found' };
+    }
+
+    const msg = order.whatsAppMessages.find(m => m.id === messageId);
+    if (!msg) {
+      return { success: false, error: 'Message entry not found' };
+    }
+
+    msg.status = status;
+    msg.updatedAt = new Date().toISOString();
+    if (status === 'Marked as Sent' && !msg.sentAt) {
+      msg.sentAt = new Date().toISOString();
+    }
+
+    this.saveDatabaseSync();
+
+    this.logAudit(
+      'WHATSAPP_STATUS_UPDATED',
+      adminName,
+      `Updated WhatsApp message ${messageId} status to "${status}" for order ${orderId}`,
+      orderId
+    );
+
+    if (isSupabaseConfigured()) {
+      this.syncOrderToSupabase(order).catch(err => {
+        console.error(`Failed to sync WhatsApp status update for order ${orderId}:`, err);
+      });
+    }
+
+    return { success: true, message: msg };
+  }
+
+  public getOrderWhatsAppMessages(orderId: string): OrderWhatsAppMessage[] {
+    const order = this.data.orders.find(o => o.id === orderId);
+    if (!order || !order.whatsAppMessages) return [];
+    return [...order.whatsAppMessages].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   }
 
   // --- INVENTORY ADJUSTMENT ---

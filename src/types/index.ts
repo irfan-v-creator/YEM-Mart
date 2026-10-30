@@ -143,6 +143,8 @@ export type PaymentStatus =
 export interface CustomerDetails {
   fullName: string;
   phone: string;
+  whatsappNumber?: string;
+  isWhatsAppSameAsPhone?: boolean;
   address: string;
   pincode: string;
   district?: string;
@@ -154,6 +156,34 @@ export interface StatusHistory {
   status: OrderStatus;
   timestamp: string;
   note: string;
+}
+
+export type WhatsAppMessageType = 
+  | 'order_details'
+  | 'order_confirmation'
+  | 'processing_update'
+  | 'shipped_update'
+  | 'delivered_update'
+  | 'custom_message';
+
+export type WhatsAppMessageStatus = 
+  | 'Draft Prepared'
+  | 'WhatsApp Opened'
+  | 'Marked as Sent'
+  | 'Not Sent';
+
+export interface OrderWhatsAppMessage {
+  id: string;
+  orderId: string;
+  messageType: WhatsAppMessageType;
+  recipientNumber: string;
+  messageContent: string;
+  adminId: string;
+  adminName: string;
+  status: WhatsAppMessageStatus;
+  createdAt: string;
+  updatedAt: string;
+  sentAt?: string;
 }
 
 export interface Order {
@@ -176,6 +206,7 @@ export interface Order {
   cancelledAt?: string;
   isRestockedOnCancellation?: boolean;
   statusTimeline: StatusHistory[];
+  whatsAppMessages?: OrderWhatsAppMessage[];
 }
 
 export interface HeroBanner {

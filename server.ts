@@ -1074,6 +1074,69 @@ app.put('/api/orders/:id/status', requireAdminAuth, (req, res) => {
   res.json({ success: true, message: `Status updated to ${status}` });
 });
 
+// Admin-only WhatsApp Message History recording & status updates
+app.get('/api/orders/:id/whatsapp-messages', requireAdminAuth, (req, res) => {
+  const messages = store.getOrderWhatsAppMessages(req.params.id);
+  res.json(messages);
+});
+
+app.post('/api/orders/:id/whatsapp-messages', requireAdminAuth, async (req, res) => {
+  const adminSession = (req as any).adminSession;
+  const adminId = adminSession?.actorName || adminSession?.role || 'admin';
+  const adminName = adminSession?.actorName || 'Admin';
+
+  const { messageType, recipientNumber, messageContent, status = 'WhatsApp Opened' } = req.body;
+
+  if (!messageType || !recipientNumber || !messageContent) {
+    return res.status(400).json({ error: 'messageType, recipientNumber, and messageContent are required' });
+  }
+
+  const validTypes = ['order_details', 'order_confirmation', 'processing_update', 'shipped_update', 'delivered_update', 'custom_message'];
+  if (!validTypes.includes(messageType)) {
+    return res.status(400).json({ error: 'Invalid messageType' });
+  }
+
+  const result = await store.recordOrderWhatsAppMessage({
+    orderId: req.params.id,
+    messageType,
+    recipientNumber: String(recipientNumber).trim(),
+    messageContent: String(messageContent).trim(),
+    adminId,
+    adminName,
+    status,
+  });
+
+  if (!result.success) {
+    return res.status(400).json({ error: result.error || 'Failed to record WhatsApp communication' });
+  }
+
+  res.status(201).json(result.message);
+});
+
+app.put('/api/orders/:id/whatsapp-messages/:msgId/status', requireAdminAuth, async (req, res) => {
+  const adminSession = (req as any).adminSession;
+  const adminName = adminSession?.actorName || 'Admin';
+  const { status } = req.body;
+
+  const validStatuses = ['Draft Prepared', 'WhatsApp Opened', 'Marked as Sent', 'Not Sent'];
+  if (!status || !validStatuses.includes(status)) {
+    return res.status(400).json({ error: 'Valid status is required ("Draft Prepared", "WhatsApp Opened", "Marked as Sent", or "Not Sent")' });
+  }
+
+  const result = await store.updateOrderWhatsAppMessageStatus(
+    req.params.id,
+    req.params.msgId,
+    status,
+    adminName
+  );
+
+  if (!result.success) {
+    return res.status(400).json({ error: result.error || 'Failed to update message status' });
+  }
+
+  res.json(result.message);
+});
+
 // Admin-only payment verification (Owner or Manager ONLY; Customers/Support CANNOT verify payments!)
 app.put('/api/orders/:id/verify-payment', requireOwnerOrManager, (req, res) => {
   const actor = (req as any).adminSession?.actorName || 'Admin';

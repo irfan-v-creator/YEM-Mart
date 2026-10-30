@@ -268,7 +268,7 @@ export function formatWhatsAppUrl(number?: string | null, text?: string): string
 /**
  * Generates a clean, professional, itemized receipt message for customer support & WhatsApp sharing.
  */
-export function generateOrderReceiptMessage(order: Order, supportWhatsApp = '7510447887'): string {
+export function generateOrderReceiptMessage(order: Order, supportWhatsApp?: string): string {
   const customerName = order.customer.fullName || 'Valued Customer';
   const customerPhone = order.customer.phone || 'N/A';
   const destination = `${order.customer.address}, ${order.customer.pincode}${order.customer.district ? ` (${order.customer.district}, Kerala)` : ''}`;
@@ -306,6 +306,12 @@ export function generateOrderReceiptMessage(order: Order, supportWhatsApp = '751
   };
   const statusStr = statusMap[order.status] || (order.status || 'awaiting_confirmation').replace(/_/g, ' ').toUpperCase();
 
+  const isConfigured = isWhatsAppConfigured(supportWhatsApp);
+  const cleanDigits = isConfigured ? supportWhatsApp!.replace(/[^0-9]/g, '').slice(-10) : '';
+  const supportLine = isConfigured
+    ? `\n💬 *Store Support WhatsApp:* +91 ${cleanDigits}`
+    : '';
+
   return `🧾 *YEM MART • OFFICIAL ORDER RECEIPT*
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🆔 *Order ID:* \`${order.id}\`
@@ -324,8 +330,7 @@ ${itemsText}
 • *Grand Total:* *₹${order.grandTotal.toLocaleString('en-IN')}*
 • *Payment Mode:* ${paymentStr}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-💬 *Store Support WhatsApp:* +91 ${supportWhatsApp.replace(/[^0-9]/g, '').slice(-10)}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━${supportLine}
 🛍️ *YEM MART Kerala* — Express Delivery Across All 14 Districts
 _Thank you for shopping with YEM MART!_`;
 }
@@ -333,7 +338,7 @@ _Thank you for shopping with YEM MART!_`;
 /**
  * Downloads a clean formatted order receipt text file on the user's device.
  */
-export function downloadOrderReceiptText(order: Order, supportWhatsApp = '7510447887'): void {
+export function downloadOrderReceiptText(order: Order, supportWhatsApp?: string): void {
   const receiptText = generateOrderReceiptMessage(order, supportWhatsApp);
   const blob = new Blob([receiptText], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -345,5 +350,127 @@ export function downloadOrderReceiptText(order: Order, supportWhatsApp = '751044
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Generates professional WhatsApp message templates for Admin Order Communication.
+ * Clearly separates store identification, recipient details, and actionable updates.
+ */
+export function generateAdminOrderWhatsAppMessage(
+  type: 'order_details' | 'order_confirmation' | 'processing_update' | 'shipped_update' | 'delivered_update' | 'custom_message',
+  order: Order,
+  customText?: string
+): string {
+  const customerName = order.customer.fullName || 'Valued Customer';
+  const destination = `${order.customer.address}, ${order.customer.pincode}${order.customer.district ? ` (${order.customer.district}, Kerala)` : ''}`;
+  const totalAmount = `₹${order.grandTotal.toLocaleString('en-IN')}`;
+  const itemsCount = order.items.reduce((sum, it) => sum + it.quantity, 0);
+
+  const itemsList = order.items
+    .map((it, idx) => `  ${idx + 1}. *${it.productName}*${it.variantName ? ` (${it.variantName})` : ''} × ${it.quantity} = ₹${it.totalPrice.toLocaleString('en-IN')}`)
+    .join('\n');
+
+  switch (type) {
+    case 'order_details':
+      return `📦 *YEM MART • ORDER SUMMARY*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hello *${customerName}*, here are your order details:
+
+🆔 *Order ID:* \`${order.id}\`
+📅 *Date Placed:* ${formatDate(order.createdAt)}
+📍 *Delivery Destination:* ${destination}
+
+🛍️ *Items (${itemsCount} Units):*
+${itemsList}
+
+💰 *Grand Total:* *${totalAmount}*
+💳 *Payment Mode:* ${order.paymentMethod === 'cod' ? 'Cash on Delivery (COD)' : 'Prepaid UPI'}
+📊 *Current Status:* ${order.status.replace(/_/g, ' ').toUpperCase()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_Thank you for choosing YEM MART Kerala!_`;
+
+    case 'order_confirmation':
+      return `✅ *YEM MART • ORDER CONFIRMED*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hello *${customerName}*,
+
+Good news! Your order *#${order.id}* has been verified and confirmed by our fulfillment team.
+
+🆔 *Order ID:* \`${order.id}\`
+💰 *Amount:* *${totalAmount}*
+📍 *Delivering To:* ${destination}
+🛍️ *Total Items:* ${itemsCount} items
+
+Our team is preparing your package for express dispatch across Kerala. We will keep you updated as your order progresses!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_YEM MART Kerala — Fast & Reliable Delivery_`;
+
+    case 'processing_update':
+      return `⚙️ *YEM MART • ORDER PROCESSING*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hello *${customerName}*,
+
+Your order *#${order.id}* is currently being packed with utmost care at our Kerala dispatch center.
+
+🆔 *Order ID:* \`${order.id}\`
+🛍️ *Items:* ${itemsCount} items
+📦 *Status:* Packing & Quality Check in Progress
+
+We are preparing your shipment for handoff to our delivery partner. You will receive tracking details once dispatched!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_YEM MART Kerala — Your Everyday Store_`;
+
+    case 'shipped_update':
+      return `🚚 *YEM MART • DISPATCHED & IN TRANSIT*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hello *${customerName}*,
+
+Exciting news! Your order *#${order.id}* has been dispatched and is currently on its way to you!
+
+🆔 *Order ID:* \`${order.id}\`
+📍 *Delivering To:* ${destination}
+💰 *Payable:* ${order.paymentMethod === 'cod' ? `*${totalAmount}* (Cash on Delivery)` : 'Prepaid (Paid in Full)'}
+🚚 *Courier / Tracking:* ${order.statusTimeline?.find(s => s.status === 'shipped')?.note || 'Express Courier Handoff'}
+
+Please ensure someone is available at the delivery location to receive the package.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_YEM MART Kerala — Express Delivery_`;
+
+    case 'delivered_update':
+      return `🎉 *YEM MART • ORDER DELIVERED*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hello *${customerName}*,
+
+Your order *#${order.id}* has been successfully delivered!
+
+🆔 *Order ID:* \`${order.id}\`
+📍 *Delivered To:* ${destination}
+🛍️ *Total Units:* ${itemsCount}
+
+We hope you love your purchase! If you have any questions or feedback, please feel free to reach out to our support team.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_Thank you for shopping with YEM MART Kerala!_`;
+
+    case 'custom_message':
+      return `💬 *YEM MART • ORDER UPDATE*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Hello *${customerName}*,
+
+Regarding your order *#${order.id}*:
+
+${(customText || '').trim()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+_YEM MART Kerala — Your Everyday Store_`;
+
+    default:
+      return '';
+  }
+}
+
 
 

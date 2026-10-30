@@ -40,7 +40,10 @@ import {
   CheckSquare,
   RefreshCw,
   HelpCircle,
-  ListPlus
+  ListPlus,
+  MessageSquare,
+  Send,
+  ExternalLink as ExternalLinkIcon
 } from 'lucide-react';
 import { 
   Product, 
@@ -53,9 +56,16 @@ import {
   Coupon,
   AuditLog,
   StockAdjustmentLog,
-  ProductPublicationStatus
+  ProductPublicationStatus,
+  OrderWhatsAppMessage,
+  WhatsAppMessageType
 } from '../types';
-import { formatCurrency, formatDate } from '../utils/formatters';
+import { 
+  formatCurrency, 
+  formatDate, 
+  formatWhatsAppUrl, 
+  generateAdminOrderWhatsAppMessage 
+} from '../utils/formatters';
 import { api } from '../utils/api';
 import { normalizeProductImageUrl, IMAGE_FALLBACK_SVG, isGoogleDriveUrl } from '../utils/imageUrl';
 import { generateNextSku, getCategorySkuPrefix } from '../utils/sku';
@@ -116,6 +126,109 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Selected Order for detail modal
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+
+  // WhatsApp Order Communications state
+  const [orderMessages, setOrderMessages] = useState<OrderWhatsAppMessage[]>([]);
+  const [isLoadingOrderMessages, setIsLoadingOrderMessages] = useState(false);
+  const [activeWhatsAppAction, setActiveWhatsAppAction] = useState<WhatsAppMessageType | null>(null);
+  const [customWhatsAppText, setCustomWhatsAppText] = useState('');
+  const [showMobileFallbackModal, setShowMobileFallbackModal] = useState<{
+    pendingType: WhatsAppMessageType;
+    customText?: string;
+  } | null>(null);
+  const [isUpdatingMessageStatusId, setIsUpdatingMessageStatusId] = useState<string | null>(null);
+
+  // Fetch WhatsApp message history when an order is opened in details modal
+  React.useEffect(() => {
+    if (selectedOrder) {
+      setIsLoadingOrderMessages(true);
+      api.getOrderWhatsAppMessages(selectedOrder.id)
+        .then(msgs => setOrderMessages(msgs))
+        .catch(err => {
+          console.warn('Could not load WhatsApp messages for order:', err);
+          setOrderMessages(selectedOrder.whatsAppMessages || []);
+        })
+        .finally(() => setIsLoadingOrderMessages(false));
+    } else {
+      setOrderMessages([]);
+      setActiveWhatsAppAction(null);
+      setCustomWhatsAppText('');
+      setShowMobileFallbackModal(null);
+    }
+  }, [selectedOrder?.id]);
+
+  const handleExecuteWhatsAppOpen = async (
+    order: Order,
+    type: WhatsAppMessageType,
+    recipientNumber: string,
+    customText?: string
+  ) => {
+    const messageContent = generateAdminOrderWhatsAppMessage(type, order, customText);
+    const waUrl = formatWhatsAppUrl(recipientNumber, messageContent);
+
+    // 1. Open WhatsApp Click-to-Chat in new tab/window
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
+
+    // 2. Truthful record on server: "WhatsApp Opened"
+    try {
+      const savedMsg = await api.recordOrderWhatsAppMessage(order.id, {
+        messageType: type,
+        recipientNumber,
+        messageContent,
+        status: 'WhatsApp Opened',
+      });
+      setOrderMessages(prev => [savedMsg, ...prev]);
+    } catch (err) {
+      console.error('Failed to log WhatsApp communication:', err);
+    } finally {
+      setActiveWhatsAppAction(null);
+      setCustomWhatsAppText('');
+      setShowMobileFallbackModal(null);
+    }
+  };
+
+  const handleTriggerWhatsAppAction = (type: WhatsAppMessageType, customText?: string) => {
+    if (!selectedOrder) return;
+    const recipient = selectedOrder.customer.whatsappNumber;
+
+    if (!recipient) {
+      // Prompt confirmation dialog asking whether admin wants to use mobile phone
+      setShowMobileFallbackModal({ pendingType: type, customText });
+      return;
+    }
+
+    handleExecuteWhatsAppOpen(selectedOrder, type, recipient, customText);
+  };
+
+  const handleAcceptMobileFallback = () => {
+    if (!selectedOrder || !showMobileFallbackModal) return;
+    const mobileRecipient = selectedOrder.customer.phone;
+    handleExecuteWhatsAppOpen(
+      selectedOrder,
+      showMobileFallbackModal.pendingType,
+      mobileRecipient,
+      showMobileFallbackModal.customText
+    );
+  };
+
+  const handleDeclineMobileFallback = () => {
+    setShowMobileFallbackModal(null);
+    setActiveWhatsAppAction(null);
+  };
+
+  const handleMarkMessageAsSent = async (messageId: string) => {
+    if (!selectedOrder) return;
+    setIsUpdatingMessageStatusId(messageId);
+    try {
+      const updated = await api.updateOrderWhatsAppMessageStatus(selectedOrder.id, messageId, 'Marked as Sent');
+      setOrderMessages(prev => prev.map(m => m.id === messageId ? updated : m));
+    } catch (err) {
+      console.error('Failed to mark message as sent:', err);
+      alert('Could not update status to Marked as Sent. Please try again.');
+    } finally {
+      setIsUpdatingMessageStatusId(null);
+    }
+  };
 
   // Orders pagination & on-demand detailed order loading
   const [orderPage, setOrderPage] = useState<number>(1);
@@ -1806,18 +1919,221 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
 
               {/* Customer Box */}
-              <div className="bg-[#F7F6F2] p-4 rounded-xl text-xs space-y-1">
-                <p className="font-bold text-[#171717]">Customer Delivery Details:</p>
-                <p>Name: {selectedOrder.customer.fullName}</p>
-                <p>Phone: {selectedOrder.customer.phone}</p>
-                <p>Address: {selectedOrder.customer.address}</p>
-                <p>Pincode: {selectedOrder.customer.pincode} ({selectedOrder.customer.district || 'Kerala'})</p>
-                {selectedOrder.customer.landmark && <p>Landmark: {selectedOrder.customer.landmark}</p>}
-                {selectedOrder.customer.orderNotes && <p>Notes: {selectedOrder.customer.orderNotes}</p>}
+              <div className="bg-[#F7F6F2] p-4 rounded-xl text-xs space-y-1.5 border border-[#E7E5E0]">
+                <div className="flex items-center justify-between">
+                  <p className="font-bold text-[#171717]">Customer Delivery Details:</p>
+                  {selectedOrder.customer.whatsappNumber ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                      WhatsApp: +91 {selectedOrder.customer.whatsappNumber}
+                      {selectedOrder.customer.isWhatsAppSameAsPhone ? ' (Same as mobile)' : ' (Dedicated)'}
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-200 text-neutral-600">
+                      No WhatsApp number specified
+                    </span>
+                  )}
+                </div>
+                <p><span className="text-neutral-500">Name:</span> <strong className="text-neutral-800">{selectedOrder.customer.fullName}</strong></p>
+                <p><span className="text-neutral-500">Mobile Phone:</span> <strong className="text-neutral-800">{selectedOrder.customer.phone}</strong></p>
+                <p><span className="text-neutral-500">Address:</span> {selectedOrder.customer.address}</p>
+                <p><span className="text-neutral-500">Pincode:</span> {selectedOrder.customer.pincode} ({selectedOrder.customer.district || 'Kerala'})</p>
+                {selectedOrder.customer.landmark && <p><span className="text-neutral-500">Landmark:</span> {selectedOrder.customer.landmark}</p>}
+                {selectedOrder.customer.orderNotes && <p><span className="text-neutral-500">Notes:</span> {selectedOrder.customer.orderNotes}</p>}
+              </div>
+
+              {/* WHATSAPP ORDER COMMUNICATION ACTIONS */}
+              <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center">
+                      <MessageSquare className="w-3.5 h-3.5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-extrabold text-emerald-950 uppercase tracking-wider">WhatsApp Communication</h4>
+                      <p className="text-[10px] text-emerald-800">Manual Click-to-Chat with prefilled order template</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-white/80 px-2 py-0.5 rounded-md border border-emerald-200">
+                    Free / Manual
+                  </span>
+                </div>
+
+                {/* 6 Required Action Buttons */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleTriggerWhatsAppAction('order_details')}
+                    className="p-2 rounded-xl bg-white border border-emerald-200 text-left hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors"
+                  >
+                    <span className="block text-xs font-bold text-neutral-800">1. Order Details</span>
+                    <span className="block text-[10px] text-neutral-500">Summary & items</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTriggerWhatsAppAction('order_confirmation')}
+                    className="p-2 rounded-xl bg-white border border-emerald-200 text-left hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors"
+                  >
+                    <span className="block text-xs font-bold text-neutral-800">2. Confirmation</span>
+                    <span className="block text-[10px] text-neutral-500">Verified & accepted</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTriggerWhatsAppAction('processing_update')}
+                    className="p-2 rounded-xl bg-white border border-emerald-200 text-left hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors"
+                  >
+                    <span className="block text-xs font-bold text-neutral-800">3. Processing</span>
+                    <span className="block text-[10px] text-neutral-500">Packing in progress</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTriggerWhatsAppAction('shipped_update')}
+                    className="p-2 rounded-xl bg-white border border-emerald-200 text-left hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors"
+                  >
+                    <span className="block text-xs font-bold text-neutral-800">4. Shipped</span>
+                    <span className="block text-[10px] text-neutral-500">Dispatched & transit</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleTriggerWhatsAppAction('delivered_update')}
+                    className="p-2 rounded-xl bg-white border border-emerald-200 text-left hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors"
+                  >
+                    <span className="block text-xs font-bold text-neutral-800">5. Delivered</span>
+                    <span className="block text-[10px] text-neutral-500">Delivery completion</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveWhatsAppAction('custom_message');
+                      setCustomWhatsAppText('');
+                    }}
+                    className="p-2 rounded-xl bg-white border border-emerald-200 text-left hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors"
+                  >
+                    <span className="block text-xs font-bold text-neutral-800">6. Custom Message</span>
+                    <span className="block text-[10px] text-neutral-500">Compose direct note</span>
+                  </button>
+                </div>
+
+                {/* Custom Message Drawer/Input Box */}
+                {activeWhatsAppAction === 'custom_message' && (
+                  <div className="p-3 bg-white rounded-xl border border-emerald-300 space-y-2 mt-2 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-neutral-800">Compose Custom Order Message</span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveWhatsAppAction(null)}
+                        className="text-[11px] text-neutral-400 hover:text-neutral-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={customWhatsAppText}
+                      onChange={(e) => setCustomWhatsAppText(e.target.value)}
+                      placeholder="Enter update details, courier link, or special delivery instructions..."
+                      className="w-full p-2.5 rounded-lg border border-neutral-300 text-xs outline-none focus:border-emerald-500 resize-none"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveWhatsAppAction(null)}
+                        className="px-3 py-1.5 rounded-lg border text-xs text-neutral-600 hover:bg-neutral-100"
+                      >
+                        Discard
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!customWhatsAppText.trim()}
+                        onClick={() => handleTriggerWhatsAppAction('custom_message', customWhatsAppText.trim())}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        Open WhatsApp With Message
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* MESSAGE HISTORY (Admin-Only) */}
+              <div className="space-y-2 pt-2 border-t">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5 text-neutral-500" />
+                    <span className="text-xs font-extrabold text-[#171717] uppercase tracking-wider">Communication History</span>
+                  </div>
+                  <span className="text-[10px] text-neutral-400">
+                    {orderMessages.length} {orderMessages.length === 1 ? 'entry' : 'entries'} • Newest first
+                  </span>
+                </div>
+
+                {isLoadingOrderMessages ? (
+                  <div className="py-4 text-center text-xs text-neutral-400">Loading communication logs...</div>
+                ) : orderMessages.length === 0 ? (
+                  <div className="py-3 px-4 rounded-xl bg-neutral-50 border border-neutral-200 text-center text-xs text-neutral-400">
+                    No WhatsApp messages have been initiated for this order yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {orderMessages.map((msg) => {
+                      const isSent = msg.status === 'Marked as Sent';
+                      const isOpened = msg.status === 'WhatsApp Opened';
+                      const isDraft = msg.status === 'Draft Prepared';
+                      return (
+                        <div key={msg.id} className="p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-xs space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-neutral-800 uppercase tracking-wider text-[11px]">
+                                {msg.messageType.replace(/_/g, ' ')}
+                              </span>
+                              <span className="text-[10px] text-neutral-500 font-mono">
+                                ➔ +91 {msg.recipientNumber.slice(-10)}
+                              </span>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              isSent 
+                                ? 'bg-emerald-100 text-emerald-800' 
+                                : isOpened 
+                                ? 'bg-blue-100 text-blue-800'
+                                : isDraft
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-neutral-200 text-neutral-700'
+                            }`}>
+                              {msg.status}
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-neutral-600 line-clamp-2 bg-white p-1.5 rounded border border-neutral-100 font-mono">
+                            {msg.messageContent}
+                          </p>
+
+                          <div className="flex items-center justify-between text-[10px] text-neutral-400 pt-1">
+                            <span>Logged by {msg.adminName} on {formatDate(msg.createdAt)}</span>
+                            {msg.status !== 'Marked as Sent' && (
+                              <button
+                                type="button"
+                                disabled={isUpdatingMessageStatusId === msg.id}
+                                onClick={() => handleMarkMessageAsSent(msg.id)}
+                                className="px-2 py-0.5 rounded bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                              >
+                                {isUpdatingMessageStatusId === msg.id ? 'Updating...' : 'Mark as Sent'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Items Breakdown */}
-              <div className="text-xs space-y-2">
+              <div className="text-xs space-y-2 pt-2 border-t">
                 <p className="font-bold text-[#171717] uppercase tracking-wider">Ordered Items:</p>
                 {selectedOrder.items.map((it, idx) => (
                   <div key={idx} className="flex justify-between py-1 border-b">
@@ -1865,6 +2181,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   className="px-4 py-2.5 rounded-xl bg-neutral-200 text-neutral-700 font-bold text-xs"
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation Modal when WhatsApp number is missing */}
+        {showMobileFallbackModal && selectedOrder && (
+          <div className="fixed inset-0 z-60 bg-black/70 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl border border-amber-200 animate-in fade-in">
+              <div className="flex items-center gap-2.5 text-amber-700 font-bold text-sm">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+                <span>No WhatsApp Number on Order</span>
+              </div>
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                The customer did not provide a separate WhatsApp number at checkout. Would you like to use their primary mobile number (<strong>+91 {selectedOrder.customer.phone}</strong>) for WhatsApp communication?
+              </p>
+              <div className="flex gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => handleDeclineMobileFallback()}
+                  className="flex-1 py-2 rounded-xl bg-neutral-100 text-neutral-700 font-bold text-xs hover:bg-neutral-200"
+                >
+                  Decline & Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAcceptMobileFallback()}
+                  className="flex-1 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700"
+                >
+                  Yes, Use Mobile
                 </button>
               </div>
             </div>

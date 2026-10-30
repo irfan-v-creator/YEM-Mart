@@ -1,4 +1,4 @@
-import { Product, Order, StoreSettings, Coupon, AuditLog, StockAdjustmentLog, CustomerDetails, OrderStatus, SavedAddress } from '../types';
+import { Product, Order, StoreSettings, Coupon, AuditLog, StockAdjustmentLog, CustomerDetails, OrderStatus, SavedAddress, OrderWhatsAppMessage } from '../types';
 import { getCustomerAuthToken } from './supabaseClient';
 
 // Safe multi-tier token persistence (In-memory -> SessionStorage -> LocalStorage -> Cookie)
@@ -449,6 +449,52 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to submit UTR');
+    }
+    return res.json();
+  },
+
+  // WhatsApp Order Communications (Admin-only)
+  async getOrderWhatsAppMessages(orderId: string): Promise<OrderWhatsAppMessage[]> {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-messages`, {
+      headers: getAdminHeaders(),
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to load WhatsApp message history');
+    }
+    return res.json();
+  },
+
+  async recordOrderWhatsAppMessage(orderId: string, payload: {
+    messageType: string;
+    recipientNumber: string;
+    messageContent: string;
+    status?: string;
+  }): Promise<OrderWhatsAppMessage> {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-messages`, {
+      method: 'POST',
+      headers: getAdminHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to record WhatsApp communication');
+    }
+    return res.json();
+  },
+
+  async updateOrderWhatsAppMessageStatus(orderId: string, messageId: string, status: string): Promise<OrderWhatsAppMessage> {
+    const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/whatsapp-messages/${encodeURIComponent(messageId)}/status`, {
+      method: 'PUT',
+      headers: getAdminHeaders(),
+      credentials: 'same-origin',
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update WhatsApp message status');
     }
     return res.json();
   },

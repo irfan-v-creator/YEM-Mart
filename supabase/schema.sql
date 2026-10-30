@@ -168,8 +168,12 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number VARCHAR(100);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS utr_number VARCHAR(100);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_submitted_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR(30);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_whatsapp_same_as_phone BOOLEAN DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS whatsapp_messages JSONB DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone);
+CREATE INDEX IF NOT EXISTS idx_orders_whatsapp_number ON orders(whatsapp_number) WHERE whatsapp_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON orders(payment_status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);

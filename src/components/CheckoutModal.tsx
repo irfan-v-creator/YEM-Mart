@@ -71,6 +71,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // Customer Form State
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [isWhatsAppSameAsPhone, setIsWhatsAppSameAsPhone] = useState(false);
+  const [whatsappNumber, setWhatsappNumber] = useState('');
   const [address, setAddress] = useState('');
   const [pincode, setPincode] = useState('');
   const [district, setDistrict] = useState<KeralaDistrict>('Ernakulam');
@@ -165,6 +167,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     if (!phone.trim() || !/^[6-9]\d{9}$/.test(phone.trim())) {
       errors.phone = 'Please enter a valid 10-digit mobile number';
     }
+    // WhatsApp number validation (only if provided and not marked same as mobile)
+    if (!isWhatsAppSameAsPhone && whatsappNumber.trim()) {
+      if (!/^[6-9]\d{9}$/.test(whatsappNumber.trim())) {
+        errors.whatsappNumber = 'Please enter a valid 10-digit WhatsApp number (starting with 6-9)';
+      }
+    }
     if (!address.trim()) errors.address = 'Please enter complete delivery address';
     if (!pincode.trim() || !/^\d{6}$/.test(pincode.trim())) {
       errors.pincode = 'Please enter a valid 6-digit Pincode';
@@ -197,9 +205,16 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       clientOrderIdRef.current = 'CO-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 7);
     }
 
+    // Determine finalized WhatsApp number based on customer selection
+    const resolvedWhatsAppNumber = isWhatsAppSameAsPhone 
+      ? phone.trim() 
+      : (whatsappNumber.trim() ? whatsappNumber.trim() : undefined);
+
     const customer: CustomerDetails = {
       fullName: fullName.trim(),
       phone: phone.trim(),
+      whatsappNumber: resolvedWhatsAppNumber,
+      isWhatsAppSameAsPhone,
       address: address.trim(),
       pincode: pincode.trim(),
       district,
@@ -441,10 +456,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               </div>
 
 
-              {/* Phone Number */}
+              {/* Mandatory Mobile Phone Number */}
               <div>
                 <label className="block text-xs font-bold text-[#171717] uppercase tracking-wider mb-1">
-                  WhatsApp Mobile Number <span className="text-red-500">*</span>
+                  Mobile Number <span className="text-red-500">*</span>
                 </label>
                 <div className="relative flex items-center">
                   <span className="absolute left-3.5 text-xs text-neutral-400 font-bold">+91</span>
@@ -461,6 +476,60 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <p className="text-xs text-red-500 mt-1">{formErrors.phone}</p>
                 )}
               </div>
+            </div>
+
+            {/* Optional WhatsApp Contact Settings */}
+            <div className="p-3.5 rounded-2xl bg-[#F7F6F2] border border-[#E7E5E0] space-y-2.5">
+              <div className="flex items-start gap-2.5">
+                <input
+                  type="checkbox"
+                  id="checkout-whatsapp-same"
+                  checked={isWhatsAppSameAsPhone}
+                  onChange={(e) => {
+                    setIsWhatsAppSameAsPhone(e.target.checked);
+                    if (e.target.checked) {
+                      setFormErrors(prev => {
+                        const copy = { ...prev };
+                        delete copy.whatsappNumber;
+                        return copy;
+                      });
+                    }
+                  }}
+                  className="mt-0.5 rounded text-[#C9A44C] focus:ring-[#C9A44C] h-4 w-4 border-neutral-300"
+                />
+                <label htmlFor="checkout-whatsapp-same" className="text-xs text-neutral-700 cursor-pointer select-none">
+                  <span className="font-bold text-[#171717]">WhatsApp number is same as mobile number</span>
+                  <p className="text-[11px] text-neutral-500 mt-0.5">
+                    Check this if you want to receive order updates on your primary mobile number via WhatsApp.
+                  </p>
+                </label>
+              </div>
+
+              {/* Show optional separate WhatsApp number input when checkbox is NOT checked */}
+              {!isWhatsAppSameAsPhone && (
+                <div className="pt-2 border-t border-[#E7E5E0] space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[11px] font-bold text-[#171717] uppercase tracking-wider">
+                      Alternative WhatsApp Number <span className="text-neutral-400 font-normal lowercase">(optional)</span>
+                    </label>
+                    <span className="text-[10px] text-neutral-400">For WhatsApp order updates</span>
+                  </div>
+                  <div className="relative flex items-center">
+                    <span className="absolute left-3 text-xs text-neutral-400 font-bold">+91</span>
+                    <input
+                      type="tel"
+                      maxLength={10}
+                      value={whatsappNumber}
+                      onChange={(e) => setWhatsappNumber(e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="Leave empty if not using WhatsApp"
+                      className="w-full pl-11 pr-3 py-2 rounded-xl bg-white border border-[#E7E5E0] focus:border-[#C9A44C] outline-none text-xs"
+                    />
+                  </div>
+                  {formErrors.whatsappNumber && (
+                    <p className="text-xs text-red-500">{formErrors.whatsappNumber}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Address */}
