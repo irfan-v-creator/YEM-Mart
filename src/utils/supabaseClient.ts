@@ -4,9 +4,18 @@ import { CustomerUser } from '../types';
 let cachedClient: SupabaseClient | null = null;
 let initPromise: Promise<SupabaseClient | null> | null = null;
 
+// Helper to defensively ensure valid lowercase 'sb_publishable_' prefix
+function normalizeSupabaseKey(key: string): string {
+  const trimmed = (key || '').trim();
+  if (trimmed.startsWith('Sb_')) {
+    return 's' + trimmed.slice(1);
+  }
+  return trimmed;
+}
+
 // Primary source: Vite defines (injected at build/dev from process.env)
 const viteUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-const viteAnon = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+const viteAnon = normalizeSupabaseKey(import.meta.env.VITE_SUPABASE_ANON_KEY || '');
 
 export async function getClientSupabase(): Promise<SupabaseClient | null> {
   if (cachedClient) return cachedClient;
@@ -23,7 +32,8 @@ export async function getClientSupabase(): Promise<SupabaseClient | null> {
           if (res.ok) {
             const data = await res.json();
             if (data.supabaseUrl && data.supabaseAnonKey) {
-              return createClient(data.supabaseUrl, data.supabaseAnonKey, {
+              const cleanKey = normalizeSupabaseKey(data.supabaseAnonKey);
+              return createClient(data.supabaseUrl, cleanKey, {
                 auth: {
                   persistSession: true,
                   autoRefreshToken: true,
@@ -44,7 +54,7 @@ export async function getClientSupabase(): Promise<SupabaseClient | null> {
     return cachedClient;
   }
 
-  cachedClient = createClient(url, anonKey, {
+  cachedClient = createClient(url, normalizeSupabaseKey(anonKey), {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
@@ -60,7 +70,7 @@ export async function getClientSupabase(): Promise<SupabaseClient | null> {
 export function getClientSupabaseSync(): SupabaseClient | null {
   if (cachedClient) return cachedClient;
   if (viteUrl && viteAnon) {
-    cachedClient = createClient(viteUrl, viteAnon, {
+    cachedClient = createClient(viteUrl, normalizeSupabaseKey(viteAnon), {
       auth: {
         persistSession: true,
         autoRefreshToken: true,

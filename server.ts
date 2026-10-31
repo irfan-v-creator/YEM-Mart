@@ -1183,9 +1183,19 @@ app.post('/api/inventory/adjust', requireOwnerOrManager, async (req, res) => {
 
 // --- CUSTOMER CONFIG (SAFE PUBLIC SUPABASE KEYS ONLY) ---
 app.get('/api/customer/config', (req, res) => {
+  const rawAnonKey =
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    '';
+  // Ensure the returned publishable key has the correct lowercase 'sb_publishable_' prefix
+  const cleanAnonKey = rawAnonKey.startsWith('Sb_')
+    ? 's' + rawAnonKey.slice(1)
+    : rawAnonKey;
+
   res.json({
     supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '',
-    supabaseAnonKey: process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '',
+    supabaseAnonKey: cleanAnonKey,
   });
 });
 
