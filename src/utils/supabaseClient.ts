@@ -14,8 +14,8 @@ function normalizeSupabaseKey(key: string): string {
 }
 
 // Primary source: Vite defines (injected at build/dev from process.env)
-const viteUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
-const viteAnon = normalizeSupabaseKey(import.meta.env.VITE_SUPABASE_ANON_KEY || '');
+const viteUrl = (import.meta.env?.VITE_SUPABASE_URL || '').trim();
+const viteAnon = normalizeSupabaseKey(import.meta.env?.VITE_SUPABASE_ANON_KEY || '');
 
 export async function getClientSupabase(): Promise<SupabaseClient | null> {
   if (cachedClient) return cachedClient;
@@ -23,12 +23,20 @@ export async function getClientSupabase(): Promise<SupabaseClient | null> {
   let url = viteUrl;
   let anonKey = viteAnon;
 
+  // Direct environment fallback in Node/SSR/testing environments
+  if ((!url || !anonKey) && typeof process !== 'undefined' && process.env) {
+    url = url || (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '').trim();
+    const rawKey = (process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
+    anonKey = anonKey || normalizeSupabaseKey(rawKey);
+  }
+
   // Runtime fallback if Vite defines are empty
   if (!url || !anonKey) {
     if (!initPromise) {
       initPromise = (async () => {
         try {
-          const res = await fetch('/api/customer/config');
+          const endpoint = typeof window !== 'undefined' ? '/api/customer/config' : 'http://localhost:3000/api/customer/config';
+          const res = await fetch(endpoint);
           if (res.ok) {
             const data = await res.json();
             if (data.supabaseUrl && data.supabaseAnonKey) {
@@ -116,7 +124,7 @@ export async function signUpCustomer(params: {
 }): Promise<{ user: CustomerUser | null; session: Session | null; error?: string }> {
   const client = await getClientSupabase();
   if (!client) {
-    return { user: null, session: null, error: 'Supabase client is not available.' };
+    return { user: null, session: null, error: 'Authentication service is currently unavailable. Please try again.' };
   }
 
   const { data, error } = await client.auth.signUp({
@@ -125,13 +133,21 @@ export async function signUpCustomer(params: {
     options: {
       data: {
         full_name: params.fullName.trim(),
+        name: params.fullName.trim(),
         phone: params.phone?.trim() || '',
       },
     },
   });
 
   if (error) {
-    return { user: null, session: null, error: error.message };
+    let msg = error.message;
+    const lower = msg.toLowerCase();
+    if (lower.includes('already registered') || lower.includes('already exists')) {
+      msg = 'An account with this email address already exists. Please sign in.';
+    } else if (lower.includes('rate limit') || lower.includes('too many requests') || (error as any).status === 429) {
+      msg = 'Too many registration requests. Please wait a few moments before trying again.';
+    }
+    return { user: null, session: null, error: msg };
   }
 
   return {
@@ -146,7 +162,7 @@ export async function signInCustomer(params: {
 }): Promise<{ user: CustomerUser | null; session: Session | null; error?: string }> {
   const client = await getClientSupabase();
   if (!client) {
-    return { user: null, session: null, error: 'Supabase client is not available.' };
+    return { user: null, session: null, error: 'Authentication service is currently unavailable. Please try again.' };
   }
 
   const { data, error } = await client.auth.signInWithPassword({
@@ -156,8 +172,13 @@ export async function signInCustomer(params: {
 
   if (error) {
     let msg = error.message;
-    if (msg.toLowerCase().includes('invalid login credentials')) {
-      msg = 'Invalid email or password. Please verify your details.';
+    const lower = msg.toLowerCase();
+    if (lower.includes('invalid login credentials')) {
+      msg = 'Invalid email address or password. Please verify your credentials.';
+    } else if (lower.includes('email not confirmed')) {
+      msg = 'Email address not confirmed. Please verify your email or disable "Confirm email" in Supabase Auth settings to allow direct sign-in.';
+    } else if (lower.includes('rate limit') || lower.includes('too many requests') || (error as any).status === 429) {
+      msg = 'Too many sign-in attempts. Please wait a few moments before trying again.';
     }
     return { user: null, session: null, error: msg };
   }
@@ -181,14 +202,19 @@ export async function signOutCustomer(): Promise<{ success: boolean; error?: str
 export async function resetCustomerPassword(email: string): Promise<{ success: boolean; error?: string }> {
   const client = await getClientSupabase();
   if (!client) {
-    return { success: false, error: 'Supabase client is not available.' };
+    return { success: false, error: 'Authentication service is currently unavailable.' };
   }
-  const redirectUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : undefined;
+  const redirectUrl = typeof window !== 'undefined' ? `${window.location.origin}/` : 'https://yemmart.vercel.app/';
   const { error } = await client.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
     redirectTo: redirectUrl,
   });
   if (error) {
-    return { success: false, error: error.message };
+    let msg = error.message;
+    const lower = msg.toLowerCase();
+    if (lower.includes('rate limit') || lower.includes('too many requests') || (error as any).status === 429) {
+      msg = 'Too many password reset requests. Please wait a few moments before trying again.';
+    }
+    return { success: false, error: msg };
   }
   return { success: true };
 }
@@ -196,13 +222,16 @@ export async function resetCustomerPassword(email: string): Promise<{ success: b
 export async function updateCustomerPassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
   const client = await getClientSupabase();
   if (!client) {
-    return { success: false, error: 'Authentication service is not available.' };
+    return { success: false, error: 'Authentication service is currently unavailable.' };
   }
   const { error } = await client.auth.updateUser({ password: newPassword });
   if (error) {
     let msg = error.message;
-    if (msg.toLowerCase().includes('session') || msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('invalid')) {
+    const lower = msg.toLowerCase();
+    if (lower.includes('session') || lower.includes('expired') || lower.includes('invalid')) {
       msg = 'Your password recovery link is invalid or has expired. Please request a new reset email.';
+    } else if (lower.includes('rate limit') || lower.includes('too many requests') || (error as any).status === 429) {
+      msg = 'Too many password update attempts. Please wait a moment before trying again.';
     }
     return { success: false, error: msg };
   }

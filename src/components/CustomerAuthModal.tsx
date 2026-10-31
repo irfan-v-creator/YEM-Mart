@@ -139,14 +139,24 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
 
         if (user) {
           if (session) {
+            // Immediate login: Supabase returned a valid session directly on signup
             onSuccess(user);
             handleClose();
           } else {
-            // Email confirmation may be required
-            setSuccessMessage(
-              'Account created! A confirmation email has been sent. Please check your inbox or sign in.'
-            );
-            setMode('login');
+            // Immediately attempt automatic sign-in with the registered email & password
+            const signInRes = await signInCustomer({ email, password });
+            if (signInRes.session && signInRes.user) {
+              onSuccess(signInRes.user);
+              handleClose();
+            } else if (signInRes.error && signInRes.error.toLowerCase().includes('email not confirmed')) {
+              setErrorMessage(
+                'Account created! Direct sign-in without verification requires turning OFF "Confirm email" in Supabase Auth (Dashboard -> Authentication -> Providers -> Email). Please toggle it off in your project settings, or check your inbox.'
+              );
+              setMode('login');
+            } else {
+              setSuccessMessage('Account created successfully! Please sign in with your email and password.');
+              setMode('login');
+            }
           }
         }
       } else if (mode === 'forgot') {
