@@ -764,7 +764,6 @@ export default function App() {
   // Admin handlers
   const handleAdminUpdateProduct = async (prod: Product) => {
     try {
-      setProducts((prev) => prev.map((p) => (p.id === prod.id ? prod : p)));
       const saved = await api.saveProduct(prod, 'Admin');
       setProducts((prev) => prev.map((p) => (p.id === saved.id ? saved : p)));
       await refreshStoreData(true);
@@ -772,12 +771,12 @@ export default function App() {
       showToast(`Product saved: ${saved.name}`);
     } catch (err: any) {
       alert(err.message || 'Error saving product');
+      await refreshStoreData(true);
     }
   };
 
   const handleAdminAddProduct = async (prod: Product) => {
     try {
-      setProducts((prev) => [prod, ...prev]);
       const saved = await api.saveProduct(prod, 'Admin');
       setProducts((prev) => [saved, ...prev.filter((p) => p.id !== prod.id && p.id !== saved.id)]);
       await refreshStoreData(true);
@@ -785,18 +784,20 @@ export default function App() {
       showToast(`Product created: ${saved.name}`);
     } catch (err: any) {
       alert(err.message || 'Error creating product');
+      await refreshStoreData(true);
     }
   };
 
   const handleAdminDeleteProduct = async (id: string) => {
     try {
-      setProducts((prev) => prev.filter((p) => p.id !== id));
       await api.deleteProduct(id, 'Admin');
+      setProducts((prev) => prev.filter((p) => p.id !== id));
       await refreshStoreData(true);
       api.getAuditLogs().then(setAuditLogs).catch(() => {});
       showToast(`Product removed`);
     } catch (err: any) {
       alert(err.message || 'Error deleting product');
+      await refreshStoreData(true);
     }
   };
 

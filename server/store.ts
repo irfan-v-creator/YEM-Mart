@@ -53,6 +53,7 @@ class Store {
   private isWriting = false;
   private lastHydratedAt = 0;
   private lastOrdersHydratedAt = 0;
+  private hasHydratedOnce = false;
   private hydrationPromise: Promise<boolean> | null = null;
   private ordersHydrationPromise: Promise<boolean> | null = null;
 
@@ -279,35 +280,49 @@ class Store {
         }
 
         // 2. Products & Variants
-        if (!pRes.error && Array.isArray(pRes.data) && pRes.data.length > 0) {
-          this.data.products = pRes.data.map((r: any) => ({
-            id: r.id,
-            name: r.name,
-            brand: r.brand || 'YEM MART',
-            category: r.category,
-            shortSummary: r.short_summary || '',
-            description: r.description || '',
-            highlights: Array.isArray(r.highlights) ? r.highlights : [],
-            specs: r.specs && typeof r.specs === 'object' ? r.specs : {},
-            price: Number(r.price),
-            originalPrice: r.original_price ? Number(r.original_price) : (r.mrp ? Number(r.mrp) : undefined),
-            discountPercent: r.discount_percent !== undefined ? Number(r.discount_percent) : (r.discount_percentage ? Number(r.discount_percentage) : 0),
-            rating: r.rating ? Number(r.rating) : 4.5,
-            reviewCount: r.review_count ? Number(r.review_count) : 0,
-            images: Array.isArray(r.images) && r.images.length > 0 ? r.images : [r.main_image || ''],
-            mainImage: r.main_image || (r.images && r.images[0]) || '',
-            status: r.status || 'published',
-            scheduledPublishDate: r.scheduled_publish_date || undefined,
-            stock: Number(r.stock ?? r.stock_count ?? 0),
-            lowStockThreshold: Number(r.low_stock_threshold ?? 5),
-            isFeatured: Boolean(r.is_featured),
-            isBestDeal: Boolean(r.is_best_deal),
-            isNewArrival: Boolean(r.is_new_arrival),
-            requiredVariantType: r.required_variant_type || undefined,
-            sku: r.sku || '',
-            tags: Array.isArray(r.tags) ? r.tags : [],
-            variants: Array.isArray(r.variants) ? r.variants : [],
-          }));
+        if (!pRes.error && Array.isArray(pRes.data)) {
+          if (pRes.data.length > 0) {
+            this.data.products = pRes.data.map((r: any) => ({
+              id: r.id,
+              name: r.name,
+              brand: r.brand || 'YEM MART',
+              category: r.category,
+              shortSummary: r.short_summary || '',
+              description: r.description || '',
+              highlights: Array.isArray(r.highlights) ? r.highlights : [],
+              specs: r.specs && typeof r.specs === 'object' ? r.specs : {},
+              price: Number(r.price),
+              originalPrice: r.original_price ? Number(r.original_price) : (r.mrp ? Number(r.mrp) : undefined),
+              discountPercent: r.discount_percent !== undefined ? Number(r.discount_percent) : (r.discount_percentage ? Number(r.discount_percentage) : 0),
+              rating: r.rating ? Number(r.rating) : 4.5,
+              reviewCount: r.review_count ? Number(r.review_count) : 0,
+              images: Array.isArray(r.images) && r.images.length > 0 ? r.images : [r.main_image || ''],
+              mainImage: r.main_image || (r.images && r.images[0]) || '',
+              status: r.status || 'published',
+              scheduledPublishDate: r.scheduled_publish_date || undefined,
+              stock: Number(r.stock ?? r.stock_count ?? 0),
+              lowStockThreshold: Number(r.low_stock_threshold ?? 5),
+              isFeatured: Boolean(r.is_featured),
+              isBestDeal: Boolean(r.is_best_deal),
+              isNewArrival: Boolean(r.is_new_arrival),
+              requiredVariantType: r.required_variant_type || undefined,
+              sku: r.sku || '',
+              tags: Array.isArray(r.tags) ? r.tags : [],
+              variants: Array.isArray(r.variants) ? r.variants : [],
+            }));
+            this.hasHydratedOnce = true;
+          } else if (!this.hasHydratedOnce) {
+            // Unseeded Supabase database on first boot: auto-seed catalog from INITIAL_PRODUCTS
+            console.log('Notice: Supabase products table is empty on initial boot. Auto-seeding catalog...');
+            const seedRes = await this.seedInitialProductsToSupabase();
+            if (seedRes.success) {
+              this.data.products = [...INITIAL_PRODUCTS];
+            }
+            this.hasHydratedOnce = true;
+          } else {
+            // Already hydrated before, and all products were removed from database
+            this.data.products = [];
+          }
         }
 
         // 3. Coupons
@@ -348,12 +363,14 @@ class Store {
     return this.hydrationPromise;
   }
 
-  private async syncProductToSupabase(p: Product) {
-    if (!isSupabaseConfigured()) return;
+  public async seedInitialProductsToSupabase(): Promise<{ success: boolean; count: number; error?: string }> {
+    if (!isSupabaseConfigured()) return { success: false, count: 0, error: 'Supabase credentials not configured' };
     const supabase = getSupabaseClient();
-    if (!supabase) return;
-    try {
-      await supabase.from('products').upsert({
+    if (!supabase) return { success: false, count: 0, error: 'Supabase client not initialized' };
+
+    let seededCount = 0;
+    for (const p of INITIAL_PRODUCTS) {
+      const { error } = await supabase.from('products').upsert({
         id: p.id,
         name: p.name,
         brand: p.brand || null,
@@ -381,20 +398,77 @@ class Store {
         scheduled_publish_date: p.scheduledPublishDate || null,
         variants: p.variants || [],
         updated_at: new Date().toISOString(),
-      });
-    } catch (err) {
+      }, { onConflict: 'id' });
+
+      if (error) {
+        console.error(`Failed to auto-seed product ${p.id}:`, error);
+        return { success: false, count: seededCount, error: error.message };
+      }
+      seededCount++;
+    }
+    return { success: true, count: seededCount };
+  }
+
+  private async syncProductToSupabase(p: Product): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) return { success: true };
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: 'Supabase client not initialized' };
+    try {
+      const { error } = await supabase.from('products').upsert({
+        id: p.id,
+        name: p.name,
+        brand: p.brand || null,
+        category: p.category,
+        short_summary: p.shortSummary || null,
+        description: p.description || '',
+        highlights: p.highlights || [],
+        specs: p.specs || {},
+        rating: p.rating ?? 4.5,
+        review_count: p.reviewCount ?? 0,
+        original_price: p.originalPrice || p.price,
+        price: p.price,
+        discount_percent: p.discountPercent ?? 0,
+        images: p.images || [],
+        main_image: p.mainImage || (p.images?.[0] ?? null),
+        tags: p.tags || [],
+        stock: p.stock ?? 0,
+        low_stock_threshold: p.lowStockThreshold ?? 5,
+        sku: p.sku || null,
+        is_featured: Boolean(p.isFeatured),
+        is_best_deal: Boolean(p.isBestDeal),
+        is_new_arrival: Boolean(p.isNewArrival),
+        required_variant_type: p.requiredVariantType || null,
+        status: p.status || 'published',
+        scheduled_publish_date: p.scheduledPublishDate || null,
+        variants: p.variants || [],
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+
+      if (error) {
+        console.error(`Failed to sync product ${p.id} to Supabase:`, error);
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
       console.error(`Failed to sync product ${p.id} to Supabase:`, err);
+      return { success: false, error: err?.message || 'Unknown Supabase sync error' };
     }
   }
 
-  private async deleteProductFromSupabase(id: string) {
-    if (!isSupabaseConfigured()) return;
+  private async deleteProductFromSupabase(id: string): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) return { success: true };
     const supabase = getSupabaseClient();
-    if (!supabase) return;
+    if (!supabase) return { success: false, error: 'Supabase client not initialized' };
     try {
-      await supabase.from('products').delete().eq('id', id);
-    } catch (err) {
+      const { error } = await supabase.from('products').delete().eq('id', id);
+      if (error) {
+        console.error(`Failed to delete product ${id} from Supabase:`, error);
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
       console.error(`Failed to delete product ${id} from Supabase:`, err);
+      return { success: false, error: err?.message || 'Unknown Supabase delete error' };
     }
   }
 
@@ -702,6 +776,14 @@ class Store {
       tags: product.tags ?? existing?.tags ?? [],
     };
 
+    // 1. Sync to Supabase PostgreSQL first
+    const syncRes = await this.syncProductToSupabase(fullProduct);
+    if (!syncRes.success) {
+      console.error(`[CRITICAL] Failed to persist product ${fullProduct.id} to Supabase:`, syncRes.error);
+      return { success: false, error: `Failed to persist product to database: ${syncRes.error}` };
+    }
+
+    // 2. Commit to local memory cache and database
     if (existingIdx >= 0) {
       this.data.products[existingIdx] = fullProduct;
       this.logAudit('PRODUCT_UPDATED', actor, `Updated product: ${fullProduct.name} (${fullProduct.sku})`, fullProduct.id);
@@ -711,8 +793,6 @@ class Store {
     }
 
     this.saveDatabaseSync();
-    await this.syncProductToSupabase(fullProduct);
-    await this.hydrateFromSupabase().catch(() => {});
     return { success: true, product: this.getProductById(fullProduct.id) || fullProduct };
   }
 
@@ -720,11 +800,17 @@ class Store {
     const prod = this.data.products.find(p => p.id === id);
     if (!prod) return false;
 
+    // 1. Delete from Supabase PostgreSQL first
+    const delRes = await this.deleteProductFromSupabase(id);
+    if (!delRes.success) {
+      console.error(`[CRITICAL] Failed to delete product ${id} from Supabase:`, delRes.error);
+      throw new Error(`Database deletion failed: ${delRes.error}`);
+    }
+
+    // 2. Remove from local memory cache and database
     this.data.products = this.data.products.filter(p => p.id !== id);
     this.logAudit('PRODUCT_DELETED', actor, `Deleted product: ${prod.name} (${prod.sku})`, id);
     this.saveDatabaseSync();
-    await this.deleteProductFromSupabase(id);
-    await this.hydrateFromSupabase().catch(() => {});
     return true;
   }
 
