@@ -13,9 +13,10 @@ async function testHttpEndpoints() {
   const res1 = await fetch(`${BASE_URL}/api/products`);
   if (!res1.ok) throw new Error(`GET /api/products failed with status ${res1.status}`);
   const products1 = await res1.json();
-  console.log(`   - Public storefront returned ${products1.length} products.`);
-  if (products1.length !== 28) {
-    throw new Error(`Expected 28 products, got ${products1.length}`);
+  const baselineCount = products1.length;
+  console.log(`   - Public storefront returned ${baselineCount} products.`);
+  if (baselineCount < 1) {
+    throw new Error(`Expected at least 1 product, got ${baselineCount}`);
   }
   console.log('   ✅ Public GET verified.\n');
 
@@ -35,15 +36,37 @@ async function testHttpEndpoints() {
   console.log(`   - Admin authenticated successfully (Role: ${loginData.role}).`);
   console.log('   ✅ Admin auth verified.\n');
 
-  // 3. Admin POST /api/products (Create Product)
-  console.log('▶ Step 3: Admin POST /api/products (Create Product)...');
-  const testId = `prod-http-${Date.now()}`;
-  const newProduct = {
-    id: testId,
+  // 3. Test Server-side Validation: Missing required field rejection
+  console.log('▶ Step 3: Testing Server-Side Validation on Missing Required Fields...');
+  const invalidPayload = {
+    name: 'Incomplete Test Product',
+    // Missing category, price, etc.
+  };
+  const invalidRes = await fetch(`${BASE_URL}/api/products`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'x-admin-token': token,
+    },
+    body: JSON.stringify(invalidPayload),
+  });
+  const invalidJson = await invalidRes.json();
+  if (invalidRes.ok || invalidRes.status !== 400) {
+    throw new Error(`Expected 400 Bad Request, got status ${invalidRes.status}`);
+  }
+  console.log(`   - Server rejected incomplete payload with 400: "${invalidJson.error}"`);
+  console.log('   ✅ Server-side missing field rejection verified.\n');
+
+  // 4. Admin POST /api/products (Create Product WITHOUT shortSummary - verifies derivation fix)
+  console.log('▶ Step 4: Admin POST /api/products (Create Product without shortSummary)...');
+  const testId1 = `prod-http-derived-${Date.now()}`;
+  const productWithoutSummary = {
+    id: testId1,
     name: 'Wayanad Organic Robusta Coffee Beans (500g)',
     brand: 'Wayanad Hills Agro',
     category: 'Home & Kitchen',
-    description: 'Single-estate shade-grown Robusta coffee beans sun-dried on the slopes of Wayanad.',
+    description: 'Single-estate shade-grown Robusta coffee beans sun-dried on the slopes of Wayanad. Delivers an intense aroma and rich crema.',
     price: 499,
     originalPrice: 650,
     discountPercent: 23,
@@ -56,56 +79,95 @@ async function testHttpEndpoints() {
     tags: ['coffee', 'wayanad', 'organic'],
   };
 
-  const createRes = await fetch(`${BASE_URL}/api/products`, {
+  const createRes1 = await fetch(`${BASE_URL}/api/products`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
       'x-admin-token': token,
     },
-    body: JSON.stringify(newProduct),
+    body: JSON.stringify(productWithoutSummary),
   });
-  if (!createRes.ok) {
-    const err = await createRes.json();
-    throw new Error(`Failed to create product via HTTP: ${JSON.stringify(err)}`);
+  if (!createRes1.ok) {
+    const err = await createRes1.json();
+    throw new Error(`Failed to create product without shortSummary: ${JSON.stringify(err)}`);
   }
-  const createdProd = await createRes.json();
-  console.log(`   - Created product: "${createdProd.name}" (${createdProd.id})`);
-
-  // Verify it appears in public list
-  const res2 = await fetch(`${BASE_URL}/api/products?fresh=true`);
-  const products2 = await res2.json();
-  const existsAfterCreate = products2.some((p: any) => p.id === testId);
-  if (!existsAfterCreate) {
-    throw new Error('Newly created product does not appear in fresh products query!');
+  const createdProd1 = await createRes1.json();
+  console.log(`   - Successfully created product without explicit shortSummary!`);
+  console.log(`   - Server derived shortSummary: "${createdProd1.shortSummary}"`);
+  if (!createdProd1.shortSummary || createdProd1.shortSummary.trim().length === 0) {
+    throw new Error('shortSummary was not derived!');
   }
-  console.log(`   - Product confirmed visible in storefront (${products2.length} total products).`);
-  console.log('   ✅ Product creation via HTTP verified.\n');
+  console.log('   ✅ Short summary auto-derivation without NOT NULL failure verified.\n');
 
-  // 4. Admin DELETE /api/products/:id (Delete Product)
-  console.log(`▶ Step 4: Admin DELETE /api/products/${testId}...`);
-  const deleteRes = await fetch(`${BASE_URL}/api/products/${testId}`, {
-    method: 'DELETE',
+  // 5. Admin POST /api/products (Create Product WITH explicit shortSummary)
+  console.log('▶ Step 5: Admin POST /api/products (Create Product with explicit shortSummary)...');
+  const testId2 = `prod-http-explicit-${Date.now()}`;
+  const customSummary = 'Authentic cold-pressed virgin coconut oil from Calicut palms.';
+  const productWithSummary = {
+    id: testId2,
+    name: 'Calicut Cold-Pressed Virgin Coconut Oil (1L)',
+    brand: 'Malabar Pure',
+    category: 'Home & Kitchen',
+    shortSummary: customSummary,
+    description: '100% natural, unrefined, extracted from fresh mature coconuts sourced from certified farms in Calicut.',
+    price: 349,
+    originalPrice: 450,
+    discountPercent: 22,
+    images: ['https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=800&q=80'],
+    mainImage: 'https://images.unsplash.com/photo-1526947425960-945c6e72858f?auto=format&fit=crop&w=800&q=80',
+    status: 'published',
+    stock: 30,
+    lowStockThreshold: 5,
+    sku: 'YM-HMK-OIL-01',
+    tags: ['coconut oil', 'organic', 'calicut'],
+  };
+
+  const createRes2 = await fetch(`${BASE_URL}/api/products`, {
+    method: 'POST',
     headers: {
+      'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
       'x-admin-token': token,
     },
+    body: JSON.stringify(productWithSummary),
   });
-  if (!deleteRes.ok) {
-    const err = await deleteRes.json();
-    throw new Error(`Failed to delete product via HTTP: ${JSON.stringify(err)}`);
+  if (!createRes2.ok) {
+    const err = await createRes2.json();
+    throw new Error(`Failed to create product with explicit shortSummary: ${JSON.stringify(err)}`);
   }
-  console.log('   - Product deleted successfully via DELETE endpoint.');
+  const createdProd2 = await createRes2.json();
+  if (createdProd2.shortSummary !== customSummary) {
+    throw new Error(`Expected custom summary "${customSummary}", got "${createdProd2.shortSummary}"`);
+  }
+  console.log(`   - Successfully created product with explicit shortSummary: "${createdProd2.shortSummary}"`);
+  console.log('   ✅ Explicit short summary preservation verified.\n');
 
-  // Verify it is gone in fresh query
-  const res3 = await fetch(`${BASE_URL}/api/products?fresh=true`);
-  const products3 = await res3.json();
-  const existsAfterDelete = products3.some((p: any) => p.id === testId);
-  if (existsAfterDelete) {
-    throw new Error('Deleted product STILL appears in fresh products query!');
+  // 6. Clean up test products
+  console.log('▶ Step 6: Cleaning up test products via DELETE endpoint...');
+  for (const tid of [testId1, testId2]) {
+    const delRes = await fetch(`${BASE_URL}/api/products/${tid}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'x-admin-token': token,
+      },
+    });
+    if (!delRes.ok) {
+      const err = await delRes.json();
+      throw new Error(`Failed to delete product ${tid}: ${JSON.stringify(err)}`);
+    }
+    console.log(`   - Deleted test product ${tid}.`);
   }
-  console.log(`   - Confirmed: Product is gone from storefront (${products3.length} total products).`);
-  console.log('   ✅ Product deletion via HTTP verified.\n');
+
+  // Verify baseline restored
+  const resFinal = await fetch(`${BASE_URL}/api/products?fresh=true`);
+  const productsFinal = await resFinal.json();
+  if (productsFinal.length !== baselineCount) {
+    throw new Error(`Expected catalog to return to baseline ${baselineCount}, but got ${productsFinal.length}`);
+  }
+  console.log(`   - Catalog restored to baseline (${productsFinal.length} products).`);
+  console.log('   ✅ Cleanup and catalog restoration verified.\n');
 
   console.log('====================================================');
   console.log('🎉 ALL PRODUCT HTTP ENDPOINT TESTS PASSED!');

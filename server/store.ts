@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import type { 
   Product, 
+  Category,
   Order, 
   StoreSettings, 
   Coupon, 
@@ -47,6 +48,29 @@ export interface DatabaseSchema {
   customerAddresses?: SavedAddress[];
 }
 
+export function deriveShortSummary(p: { shortSummary?: string; description?: string; name?: string; category?: string; brand?: string }): string {
+  if (p.shortSummary && p.shortSummary.trim().length > 0) {
+    return p.shortSummary.trim();
+  }
+  if (p.description && p.description.trim().length > 0) {
+    const desc = p.description.trim();
+    const firstSentenceMatch = desc.match(/^([^.!?]+[.!?])/);
+    if (firstSentenceMatch && firstSentenceMatch[1].trim().length >= 10 && firstSentenceMatch[1].trim().length <= 160) {
+      return firstSentenceMatch[1].trim();
+    }
+    if (desc.length > 120) {
+      const sliced = desc.slice(0, 120);
+      const lastSpace = sliced.lastIndexOf(' ');
+      const cleanSlice = lastSpace > 40 ? sliced.slice(0, lastSpace) : sliced;
+      return cleanSlice.trim() + '...';
+    }
+    return desc;
+  }
+  const brandPrefix = p.brand && p.brand.trim() && p.brand.trim() !== 'YEM MART' ? `${p.brand.trim()} ` : '';
+  const prodName = p.name?.trim() || 'Quality Product';
+  const cat = p.category?.trim() || 'General';
+  return `${brandPrefix}${prodName} - Quality ${cat} essentials by YEM MART.`.trim();
+}
 
 class Store {
   private data: DatabaseSchema;
@@ -370,33 +394,37 @@ class Store {
 
     let seededCount = 0;
     for (const p of INITIAL_PRODUCTS) {
+      const shortSummary = deriveShortSummary(p);
+      const mainImage = p.mainImage || (Array.isArray(p.images) && p.images[0]) || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80';
+      const images = Array.isArray(p.images) && p.images.length > 0 ? p.images : [mainImage];
+
       const { error } = await supabase.from('products').upsert({
         id: p.id,
-        name: p.name,
-        brand: p.brand || null,
-        category: p.category,
-        short_summary: p.shortSummary || null,
-        description: p.description || '',
-        highlights: p.highlights || [],
-        specs: p.specs || {},
+        name: p.name.trim(),
+        brand: p.brand?.trim() || 'YEM MART',
+        category: p.category.trim(),
+        short_summary: shortSummary,
+        description: p.description?.trim() || shortSummary,
+        highlights: Array.isArray(p.highlights) ? p.highlights : [],
+        specs: p.specs && typeof p.specs === 'object' ? p.specs : {},
         rating: p.rating ?? 4.5,
         review_count: p.reviewCount ?? 0,
         original_price: p.originalPrice || p.price,
-        price: p.price,
+        price: Number(p.price),
         discount_percent: p.discountPercent ?? 0,
-        images: p.images || [],
-        main_image: p.mainImage || (p.images?.[0] ?? null),
-        tags: p.tags || [],
-        stock: p.stock ?? 0,
-        low_stock_threshold: p.lowStockThreshold ?? 5,
-        sku: p.sku || null,
+        images,
+        main_image: mainImage,
+        tags: Array.isArray(p.tags) ? p.tags : [],
+        stock: Number(p.stock ?? 0),
+        low_stock_threshold: Number(p.lowStockThreshold ?? 5),
+        sku: p.sku?.trim() || this.generateNextSku(p.category),
         is_featured: Boolean(p.isFeatured),
         is_best_deal: Boolean(p.isBestDeal),
         is_new_arrival: Boolean(p.isNewArrival),
         required_variant_type: p.requiredVariantType || null,
         status: p.status || 'published',
         scheduled_publish_date: p.scheduledPublishDate || null,
-        variants: p.variants || [],
+        variants: Array.isArray(p.variants) ? p.variants : [],
         updated_at: new Date().toISOString(),
       }, { onConflict: 'id' });
 
@@ -414,33 +442,40 @@ class Store {
     const supabase = getSupabaseClient();
     if (!supabase) return { success: false, error: 'Supabase client not initialized' };
     try {
+      const shortSummary = p.shortSummary?.trim() || deriveShortSummary(p);
+      const mainImage = p.mainImage || (Array.isArray(p.images) && p.images[0]) || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80';
+      const images = Array.isArray(p.images) && p.images.length > 0 ? p.images : [mainImage];
+      const description = p.description?.trim() || shortSummary;
+      const brand = p.brand?.trim() || 'YEM MART';
+      const sku = p.sku?.trim() || this.generateNextSku(p.category);
+
       const { error } = await supabase.from('products').upsert({
         id: p.id,
-        name: p.name,
-        brand: p.brand || null,
-        category: p.category,
-        short_summary: p.shortSummary || null,
-        description: p.description || '',
-        highlights: p.highlights || [],
-        specs: p.specs || {},
-        rating: p.rating ?? 4.5,
-        review_count: p.reviewCount ?? 0,
-        original_price: p.originalPrice || p.price,
-        price: p.price,
-        discount_percent: p.discountPercent ?? 0,
-        images: p.images || [],
-        main_image: p.mainImage || (p.images?.[0] ?? null),
-        tags: p.tags || [],
-        stock: p.stock ?? 0,
-        low_stock_threshold: p.lowStockThreshold ?? 5,
-        sku: p.sku || null,
+        name: p.name.trim(),
+        brand,
+        category: p.category.trim(),
+        short_summary: shortSummary,
+        description,
+        highlights: Array.isArray(p.highlights) ? p.highlights : [],
+        specs: p.specs && typeof p.specs === 'object' ? p.specs : {},
+        rating: p.rating !== undefined && !isNaN(p.rating) ? Number(p.rating) : 4.5,
+        review_count: p.reviewCount !== undefined && !isNaN(p.reviewCount) ? Number(p.reviewCount) : 0,
+        original_price: p.originalPrice !== undefined && p.originalPrice !== null && !isNaN(p.originalPrice) ? Number(p.originalPrice) : Number(p.price),
+        price: Number(p.price),
+        discount_percent: p.discountPercent !== undefined && !isNaN(p.discountPercent) ? Number(p.discountPercent) : 0,
+        images,
+        main_image: mainImage,
+        tags: Array.isArray(p.tags) ? p.tags : [],
+        stock: Number(p.stock ?? 0),
+        low_stock_threshold: Number(p.lowStockThreshold ?? 5),
+        sku,
         is_featured: Boolean(p.isFeatured),
         is_best_deal: Boolean(p.isBestDeal),
         is_new_arrival: Boolean(p.isNewArrival),
         required_variant_type: p.requiredVariantType || null,
         status: p.status || 'published',
         scheduled_publish_date: p.scheduledPublishDate || null,
-        variants: p.variants || [],
+        variants: Array.isArray(p.variants) ? p.variants : [],
         updated_at: new Date().toISOString(),
       }, { onConflict: 'id' });
 
@@ -742,14 +777,33 @@ class Store {
       ? product.images
       : [normalizedMain];
     const normalizedImages = rawImages.map(img => normalizeProductImageUrl(img)).filter(Boolean);
+    const finalMainImage = normalizedMain || normalizedImages[0] || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80';
+    const finalImages = normalizedImages.length > 0 ? normalizedImages : [finalMainImage];
+
+    const finalBrand = product.brand?.trim() || existing?.brand?.trim() || 'YEM MART';
+
+    // Derive clean, non-null short summary from shortSummary, description, or product name + category
+    const finalShortSummary = deriveShortSummary({
+      shortSummary: product.shortSummary ?? existing?.shortSummary,
+      description: product.description ?? existing?.description,
+      name: product.name,
+      category: product.category,
+      brand: finalBrand,
+    });
+
+    const finalDescription = (product.description && product.description.trim().length > 0)
+      ? product.description.trim()
+      : (existing?.description && existing.description.trim().length > 0)
+      ? existing.description.trim()
+      : finalShortSummary;
 
     const fullProduct: Product = {
       id: product.id,
       name: product.name.trim(),
-      brand: product.brand?.trim() || existing?.brand || 'YEM MART',
-      category: product.category,
-      description: product.description ?? existing?.description ?? '',
-      shortSummary: product.shortSummary ?? existing?.shortSummary ?? product.description?.slice(0, 100) ?? '',
+      brand: finalBrand,
+      category: product.category.trim() as Category,
+      description: finalDescription,
+      shortSummary: finalShortSummary,
       highlights: product.highlights !== undefined
         ? sanitizeHighlights(product.highlights)
         : (existing?.highlights ? sanitizeHighlights(existing.highlights) : []),
@@ -757,12 +811,12 @@ class Store {
         ? sanitizeSpecs(product.specs)
         : (existing?.specs ? sanitizeSpecs(existing.specs) : {}),
       price: Number(product.price),
-      originalPrice: product.originalPrice !== undefined && product.originalPrice !== null ? Number(product.originalPrice) : existing?.originalPrice,
-      discountPercent: product.discountPercent !== undefined ? product.discountPercent : existing?.discountPercent,
-      rating: product.rating !== undefined ? Number(product.rating) : existing?.rating,
-      reviewCount: product.reviewCount !== undefined ? Number(product.reviewCount) : existing?.reviewCount,
-      images: normalizedImages.length > 0 ? normalizedImages : [normalizedMain].filter(Boolean),
-      mainImage: normalizedMain,
+      originalPrice: product.originalPrice !== undefined && product.originalPrice !== null && !isNaN(product.originalPrice) ? Number(product.originalPrice) : existing?.originalPrice,
+      discountPercent: product.discountPercent !== undefined && !isNaN(product.discountPercent) ? Number(product.discountPercent) : existing?.discountPercent,
+      rating: product.rating !== undefined && !isNaN(product.rating) ? Number(product.rating) : existing?.rating,
+      reviewCount: product.reviewCount !== undefined && !isNaN(product.reviewCount) ? Number(product.reviewCount) : existing?.reviewCount,
+      images: finalImages,
+      mainImage: finalMainImage,
       status: product.status || existing?.status || 'published',
       scheduledPublishDate: product.scheduledPublishDate ?? existing?.scheduledPublishDate,
       stock: Number(product.stock ?? existing?.stock ?? 10),
@@ -775,6 +829,41 @@ class Store {
       sku: finalSku,
       tags: product.tags ?? existing?.tags ?? [],
     };
+
+    // Server-side explicit validation: Report exact missing field before attempting database write
+    if (!fullProduct.id || !fullProduct.id.trim()) {
+      return { success: false, error: 'Product ID is missing.' };
+    }
+    if (!fullProduct.name || !fullProduct.name.trim()) {
+      return { success: false, error: 'Product name is required.' };
+    }
+    if (!fullProduct.category || !fullProduct.category.trim()) {
+      return { success: false, error: 'Category is required.' };
+    }
+    if (fullProduct.price === undefined || isNaN(fullProduct.price) || fullProduct.price < 0) {
+      return { success: false, error: 'Valid price (non-negative number) is required.' };
+    }
+    if (!fullProduct.sku || !fullProduct.sku.trim()) {
+      return { success: false, error: 'Product SKU is required.' };
+    }
+    if (!fullProduct.shortSummary || !fullProduct.shortSummary.trim()) {
+      return { success: false, error: 'Product short summary is required.' };
+    }
+    if (!fullProduct.description || !fullProduct.description.trim()) {
+      return { success: false, error: 'Product description is required.' };
+    }
+    if (!fullProduct.brand || !fullProduct.brand.trim()) {
+      return { success: false, error: 'Product brand is required.' };
+    }
+    if (!fullProduct.mainImage || !fullProduct.mainImage.trim()) {
+      return { success: false, error: 'Product main image URL is required.' };
+    }
+    if (!Array.isArray(fullProduct.images) || fullProduct.images.length === 0) {
+      return { success: false, error: 'Product must have at least one image.' };
+    }
+    if (fullProduct.stock === undefined || isNaN(fullProduct.stock) || fullProduct.stock < 0) {
+      return { success: false, error: 'Valid product stock count is required.' };
+    }
 
     // 1. Sync to Supabase PostgreSQL first
     const syncRes = await this.syncProductToSupabase(fullProduct);
@@ -838,6 +927,7 @@ class Store {
         name: row.name,
         brand: row.brand || 'YEM MART',
         category: row.category,
+        shortSummary: row.shortSummary || row.short_summary || '',
         description: row.description || '',
         price,
         originalPrice: row.originalPrice ? Number(row.originalPrice) : undefined,

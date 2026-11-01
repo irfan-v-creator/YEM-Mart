@@ -2496,6 +2496,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </div>
 
                     <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-bold">Short Summary</label>
+                        <span className="text-[10px] text-neutral-400">Brief 1-sentence tagline (auto-generated from description if blank)</span>
+                      </div>
+                      <input
+                        type="text"
+                        value={editingProduct.shortSummary || ''}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, shortSummary: e.target.value })}
+                        placeholder="e.g. Breathable pure linen shirt tailored for Kerala's tropical climate."
+                        className="w-full p-2.5 rounded-xl border border-[#E7E5E0] outline-none text-xs"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
                       <label className="block font-bold mb-1">Product Description</label>
                       <textarea
                         rows={3}
@@ -3002,8 +3016,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       .map((h) => (typeof h === 'string' ? h.trim() : ''))
                       .filter(Boolean);
 
+                    const derivedSummary = editingProduct.shortSummary?.trim() ||
+                      (editingProduct.description?.trim() ? (editingProduct.description.trim().match(/^([^.!?]+[.!?])/)?.[1]?.trim() || editingProduct.description.trim().slice(0, 100)) : '') ||
+                      `${editingProduct.name.trim()} (${editingProduct.category})`;
+
                     const finalProductToSave: Product = {
                       ...editingProduct,
+                      shortSummary: derivedSummary,
                       highlights: cleanedHighlights,
                       specs: mergedSpecs,
                     };

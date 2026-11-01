@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import { getSupabaseClient, isSupabaseConfigured } from '../server/supabase.js';
+import { deriveShortSummary } from '../server/store.js';
 import { INITIAL_PRODUCTS } from '../src/data/initialData.js';
 
 export async function seedProductsToSupabase(): Promise<{ success: boolean; count: number; error?: string }> {
@@ -16,33 +17,37 @@ export async function seedProductsToSupabase(): Promise<{ success: boolean; coun
 
   let seededCount = 0;
   for (const p of INITIAL_PRODUCTS) {
+    const shortSummary = deriveShortSummary(p);
+    const mainImage = p.mainImage || (Array.isArray(p.images) && p.images[0]) || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=800&q=80';
+    const images = Array.isArray(p.images) && p.images.length > 0 ? p.images : [mainImage];
+
     const payload = {
       id: p.id,
-      name: p.name,
-      brand: p.brand || null,
-      category: p.category,
-      short_summary: p.shortSummary || null,
-      description: p.description || '',
-      highlights: p.highlights || [],
-      specs: p.specs || {},
+      name: p.name.trim(),
+      brand: p.brand?.trim() || 'YEM MART',
+      category: p.category.trim(),
+      short_summary: shortSummary,
+      description: p.description?.trim() || shortSummary,
+      highlights: Array.isArray(p.highlights) ? p.highlights : [],
+      specs: p.specs && typeof p.specs === 'object' ? p.specs : {},
       rating: p.rating ?? 4.5,
       review_count: p.reviewCount ?? 0,
       original_price: p.originalPrice || p.price,
-      price: p.price,
+      price: Number(p.price),
       discount_percent: p.discountPercent ?? 0,
-      images: p.images || [],
-      main_image: p.mainImage || (p.images?.[0] ?? null),
-      tags: p.tags || [],
-      stock: p.stock ?? 0,
-      low_stock_threshold: p.lowStockThreshold ?? 5,
-      sku: p.sku || null,
+      images,
+      main_image: mainImage,
+      tags: Array.isArray(p.tags) ? p.tags : [],
+      stock: Number(p.stock ?? 0),
+      low_stock_threshold: Number(p.lowStockThreshold ?? 5),
+      sku: p.sku || `YM-${p.category.slice(0, 3).toUpperCase()}-${p.id}`,
       is_featured: Boolean(p.isFeatured),
       is_best_deal: Boolean(p.isBestDeal),
       is_new_arrival: Boolean(p.isNewArrival),
       required_variant_type: p.requiredVariantType || null,
       status: p.status || 'published',
       scheduled_publish_date: p.scheduledPublishDate || null,
-      variants: p.variants || [],
+      variants: Array.isArray(p.variants) ? p.variants : [],
       updated_at: new Date().toISOString(),
     };
 
